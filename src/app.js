@@ -57,6 +57,7 @@ let recognition = null;
 let transcript = "";
 let transcriptConfidence = 0;
 let latestRecordingDurationMs = 0;
+let latestSpeechWindow = null;
 let wordAnalysis = [];
 let speechQueue = [];
 let speechQueueIndex = 0;
@@ -588,6 +589,10 @@ function buildWordAnalysis(expectedText, spokenText, durationMs) {
   const recognitionConfidence = transcriptConfidence || 0.68;
   const spokenCount = Math.max(spoken.length, 1);
   const durationSeconds = durationMs / 1000;
+  const speechStart = latestSpeechWindow?.start ?? 0;
+  const speechEnd = latestSpeechWindow?.end ?? durationSeconds;
+  const speechDuration = Math.max(0.4, speechEnd - speechStart);
+  const wordSlotSeconds = speechDuration / spokenCount;
 
   const rows = aligned.map((item, index) => {
     const similarity = wordSimilarity(item.expected, item.spoken);
@@ -598,9 +603,13 @@ function buildWordAnalysis(expectedText, spokenText, durationMs) {
     const accuracy = exact ? 100 : Math.round(similarity * 100);
     const fluency = item.spoken ? Math.round((paceScore + accuracy) / 2) : 0;
     const startTime =
-      item.spokenIndex >= 0 ? (item.spokenIndex / spokenCount) * durationSeconds : null;
+      item.spokenIndex >= 0
+        ? speechStart + Math.max(0, item.spokenIndex * wordSlotSeconds - wordSlotSeconds * 0.18)
+        : null;
     const endTime =
-      item.spokenIndex >= 0 ? ((item.spokenIndex + 1) / spokenCount) * durationSeconds : null;
+      item.spokenIndex >= 0
+        ? speechStart + Math.min(speechDuration, (item.spokenIndex + 1) * wordSlotSeconds + wordSlotSeconds * 0.24)
+        : null;
 
     return {
       id: index,
@@ -709,7 +718,7 @@ function renderWordAnalysis(analysis) {
     : "Record speech to see word scores.";
   startDrillBtn.disabled = drillRows.length === 0;
   drillStatus.textContent = drillRows.length
-    ? "Use each drill card to hear your attempt, compare slow/normal model audio, and record the word again."
+    ? "Use each drill card to hear the estimated user segment, compare slow/normal model audio, and record the word again."
     : "No correction drill needed for this recording.";
 
   wordAnalysis.forEach((row) => {
@@ -811,7 +820,7 @@ async function playRecordingSegment(startTime, endTime) {
   await waitForRecordingMetadata();
   const duration = recordingPlayer.duration || latestRecordingDurationMs / 1000;
   const start = Math.max(0, Math.min(startTime, duration));
-  const end = Math.max(start + 0.25, Math.min(endTime + 0.12, duration));
+  const end = Math.max(start + 0.25, Math.min(endTime, duration));
 
   recordingPlayer.pause();
   recordingPlayer.currentTime = start;
@@ -827,6 +836,48 @@ async function playRecordingSegment(startTime, endTime) {
       resolve(true);
     }, Math.max(250, (end - start) * 1000));
   });
+}
+
+async function detectSpeechWindow(blob) {
+  try {
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextConstructor) return null;
+
+    const audioContext = new AudioContextConstructor();
+    const buffer = await blob.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(buffer);
+    const channel = audioBuffer.getChannelData(0);
+    const sampleRate = audioBuffer.sampleRate;
+    const frameSize = Math.max(1, Math.floor(sampleRate * 0.04));
+    const frames = [];
+
+    for (let offset = 0; offset < channel.length; offset += frameSize) {
+      let sum = 0;
+      const end = Math.min(offset + frameSize, channel.length);
+
+      for (let index = offset; index < end; index += 1) {
+        sum += channel[index] * channel[index];
+      }
+
+      frames.push(Math.sqrt(sum / Math.max(1, end - offset)));
+    }
+
+    const maxRms = Math.max(...frames);
+    const threshold = Math.max(0.012, maxRms * 0.16);
+    const first = frames.findIndex((value) => value >= threshold);
+    const last = frames.findLastIndex((value) => value >= threshold);
+
+    await audioContext.close();
+
+    if (first < 0 || last < first) return null;
+
+    return {
+      start: Math.max(0, (first * frameSize) / sampleRate - 0.08),
+      end: Math.min(audioBuffer.duration, ((last + 1) * frameSize) / sampleRate + 0.16),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function speakModelWord(word, rate = 0.82) {
@@ -905,7 +956,7 @@ async function recordWordRetry(row, card) {
 }
 
 async function runDrillForWord(row) {
-  drillStatus.textContent = `Your attempt: ${row.spoken}. Model: ${row.expected}.`;
+  drillStatus.textContent = `Estimated user segment: ${row.spoken}. Model: ${row.expected}.`;
 
   if (row.startTime !== null && row.endTime !== null) {
     const played = await playRecordingSegment(row.startTime, row.endTime);
@@ -926,6 +977,7 @@ function resetPronunciationAnalysis() {
   accuracyMetric.textContent = "--";
   fluencyMetric.textContent = "--";
   wordAnalysis = [];
+  latestSpeechWindow = null;
   wordAnalysisList.textContent = "";
   drillWordList.textContent = "";
   wordAnalysisSummary.textContent = "Record speech to see word scores.";
@@ -1012,13 +1064,15 @@ async function toggleRecording() {
     if (event.data.size) audioChunks.push(event.data);
   };
 
-  mediaRecorder.onstop = () => {
+  mediaRecorder.onstop = async () => {
     const durationMs = Date.now() - recordingStartedAt;
     latestRecordingDurationMs = durationMs;
     const blob = new Blob(audioChunks, { type: "audio/webm" });
     recordingPlayer.src = URL.createObjectURL(blob);
     recordingPlayer.hidden = false;
     playRecordingBtn.disabled = false;
+    drillStatus.textContent = "Analyzing voice timing...";
+    latestSpeechWindow = await detectSpeechWindow(blob);
     stream.getTracks().forEach((track) => track.stop());
     renderFeedback(durationMs);
   };
