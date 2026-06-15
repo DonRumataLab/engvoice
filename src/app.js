@@ -1,0 +1,1139 @@
+const tabButtons = document.querySelectorAll(".tab-btn");
+const screens = document.querySelectorAll(".screen");
+const appScriptUrl = new URL(document.currentScript?.src || "./src/app.js", document.baseURI);
+const readerText = document.querySelector("#readerText");
+const readerFileInput = document.querySelector("#readerFileInput");
+const readerFileName = document.querySelector("#readerFileName");
+const readerWordCount = document.querySelector("#readerWordCount");
+const readerReadTime = document.querySelector("#readerReadTime");
+const readerTargetPace = document.querySelector("#readerTargetPace");
+const readerVoiceSelect = document.querySelector("#readerVoiceSelect");
+const readerSpeakBtn = document.querySelector("#readerSpeakBtn");
+const readerPauseBtn = document.querySelector("#readerPauseBtn");
+const readerStopBtn = document.querySelector("#readerStopBtn");
+const readerRateInput = document.querySelector("#readerRateInput");
+const readerPitchInput = document.querySelector("#readerPitchInput");
+const readerCurrentText = document.querySelector("#readerCurrentText");
+const sourceText = document.querySelector("#sourceText");
+const fileInput = document.querySelector("#fileInput");
+const fileName = document.querySelector("#fileName");
+const wordCount = document.querySelector("#wordCount");
+const readTime = document.querySelector("#readTime");
+const targetPace = document.querySelector("#targetPace");
+const voiceSelect = document.querySelector("#voiceSelect");
+const speakBtn = document.querySelector("#speakBtn");
+const pauseBtn = document.querySelector("#pauseBtn");
+const stopBtn = document.querySelector("#stopBtn");
+const rateInput = document.querySelector("#rateInput");
+const pitchInput = document.querySelector("#pitchInput");
+const recordBtn = document.querySelector("#recordBtn");
+const playRecordingBtn = document.querySelector("#playRecordingBtn");
+const recordingTimer = document.querySelector("#recordingTimer");
+const recordingPlayer = document.querySelector("#recordingPlayer");
+const practiceScore = document.querySelector("#practiceScore");
+const scoreSummary = document.querySelector("#scoreSummary");
+const feedbackList = document.querySelector("#feedbackList");
+const transcriptText = document.querySelector("#transcriptText");
+const paceMetric = document.querySelector("#paceMetric");
+const pronunciationMetric = document.querySelector("#pronunciationMetric");
+const accuracyMetric = document.querySelector("#accuracyMetric");
+const fluencyMetric = document.querySelector("#fluencyMetric");
+const wordAnalysisSummary = document.querySelector("#wordAnalysisSummary");
+const wordAnalysisList = document.querySelector("#wordAnalysisList");
+const startDrillBtn = document.querySelector("#startDrillBtn");
+const drillStatus = document.querySelector("#drillStatus");
+const drillWordList = document.querySelector("#drillWordList");
+const supportStatus = document.querySelector("#supportStatus");
+
+const SpeechRecognition =
+  window.SpeechRecognition || window.webkitSpeechRecognition || null;
+
+let voices = [];
+let mediaRecorder = null;
+let audioChunks = [];
+let recordingStartedAt = 0;
+let timerId = null;
+let recognition = null;
+let transcript = "";
+let transcriptConfidence = 0;
+let latestRecordingDurationMs = 0;
+let wordAnalysis = [];
+let speechQueue = [];
+let speechQueueIndex = 0;
+let speechStopped = false;
+let speechDisplay = null;
+let speechFallbackTimer = null;
+
+function normalizeText(value) {
+  return value
+    .toLowerCase()
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/[^\p{L}\p{N}' ]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(value) {
+  const normalized = normalizeText(value);
+  return normalized ? normalized.split(" ") : [];
+}
+
+function renderTextStats(textarea, countElement, readTimeElement, paceElement) {
+  const words = tokenize(textarea.value).length;
+  const minutes = words / 150;
+  const wholeMinutes = Math.floor(minutes);
+  const seconds = Math.max(0, Math.round((minutes - wholeMinutes) * 60));
+  countElement.textContent = words.toString();
+  readTimeElement.textContent = `${wholeMinutes}:${seconds.toString().padStart(2, "0")}`;
+  paceElement.textContent = words > 80 ? "145" : "120";
+}
+
+function updateTextStats() {
+  renderTextStats(sourceText, wordCount, readTime, targetPace);
+}
+
+function updateReaderTextStats() {
+  renderTextStats(readerText, readerWordCount, readerReadTime, readerTargetPace);
+}
+
+async function extractTextFromPdf(file) {
+  const pdfjsLib = await import(new URL("../vendor/pdfjs/pdf.min.js", appScriptUrl).toString());
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    "../vendor/pdfjs/pdf.worker.min.js",
+    appScriptUrl,
+  ).toString();
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const text = content.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (text) pages.push(text);
+  }
+
+  return pages.join("\n\n");
+}
+
+function extractTextFromFile(name, rawText) {
+  const extension = name.split(".").pop()?.toLowerCase();
+
+  if (extension === "html" || extension === "htm") {
+    const documentText = new DOMParser().parseFromString(rawText, "text/html");
+    return documentText.body.textContent || rawText;
+  }
+
+  if (extension === "json") {
+    try {
+      const json = JSON.parse(rawText);
+      return JSON.stringify(json, null, 2).replace(/[{}\[\]",:]/g, " ");
+    } catch {
+      return rawText;
+    }
+  }
+
+  if (extension === "srt" || extension === "vtt") {
+    return rawText
+      .split(/\r?\n/)
+      .filter((line) => !/^\d+$/.test(line.trim()))
+      .filter((line) => !line.includes("-->"))
+      .join(" ");
+  }
+
+  if (extension === "csv") {
+    return rawText.replace(/[,\t;]/g, " ");
+  }
+
+  return rawText;
+}
+
+function populateVoiceSelect(selectElement) {
+  selectElement.innerHTML = "";
+
+  if (!voices.length) {
+    const option = new Option("English voice from browser", "");
+    selectElement.add(option);
+    return;
+  }
+
+  voices.forEach((voice) => {
+    const option = new Option(`${voice.name} (${voice.lang})`, voice.name);
+    selectElement.add(option);
+  });
+}
+
+function loadVoices() {
+  voices = window.speechSynthesis
+    ? window.speechSynthesis.getVoices().filter((voice) => voice.lang.startsWith("en"))
+    : [];
+
+  populateVoiceSelect(voiceSelect);
+  populateVoiceSelect(readerVoiceSelect);
+}
+
+function cleanSpeechText(value) {
+  return value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitTextForSpeech(value, maxLength = 180) {
+  const text = cleanSpeechText(value);
+  if (!text) return [];
+
+  const sentences = text.match(/[^.!?;:]+[.!?;:]?|[^.!?;:]+$/g) || [text];
+  const chunks = [];
+  let current = "";
+
+  sentences.forEach((sentence) => {
+    const trimmed = sentence.trim();
+    if (!trimmed) return;
+
+    if (trimmed.length > maxLength) {
+      if (current) {
+        chunks.push(current);
+        current = "";
+      }
+
+      const words = trimmed.split(" ");
+      let wordChunk = "";
+
+      words.forEach((word) => {
+        const next = wordChunk ? `${wordChunk} ${word}` : word;
+        if (next.length > maxLength && wordChunk) {
+          chunks.push(wordChunk);
+          wordChunk = word;
+        } else {
+          wordChunk = next;
+        }
+      });
+
+      if (wordChunk) chunks.push(wordChunk);
+      return;
+    }
+
+    const next = current ? `${current} ${trimmed}` : trimmed;
+    if (next.length > maxLength && current) {
+      chunks.push(current);
+      current = trimmed;
+    } else {
+      current = next;
+    }
+  });
+
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function setSpeechDisplayMessage(message) {
+  if (!speechDisplay) return;
+  speechDisplay.textContent = message;
+}
+
+function renderSpeechChunk(chunk, activeCharIndex = -1) {
+  if (!speechDisplay) return;
+
+  speechDisplay.textContent = "";
+
+  const wordPattern = /\S+/g;
+  let lastIndex = 0;
+  let match = wordPattern.exec(chunk);
+
+  while (match) {
+    const word = match[0];
+    const start = match.index;
+    const end = start + word.length;
+
+    if (start > lastIndex) {
+      speechDisplay.append(document.createTextNode(chunk.slice(lastIndex, start)));
+    }
+
+    const wordElement = document.createElement("span");
+    wordElement.textContent = word;
+
+    if (activeCharIndex >= start && activeCharIndex < end) {
+      wordElement.className = "current-word";
+    }
+
+    speechDisplay.append(wordElement);
+    lastIndex = end;
+    match = wordPattern.exec(chunk);
+  }
+
+  if (lastIndex < chunk.length) {
+    speechDisplay.append(document.createTextNode(chunk.slice(lastIndex)));
+  }
+}
+
+function getWordRanges(chunk) {
+  const ranges = [];
+  const wordPattern = /\S+/g;
+  let match = wordPattern.exec(chunk);
+
+  while (match) {
+    ranges.push({ start: match.index, end: match.index + match[0].length });
+    match = wordPattern.exec(chunk);
+  }
+
+  return ranges;
+}
+
+function clearSpeechFallbackTimer() {
+  if (!speechFallbackTimer) return;
+  window.clearInterval(speechFallbackTimer);
+  speechFallbackTimer = null;
+}
+
+function startSpeechFallbackHighlight(chunk, rate) {
+  clearSpeechFallbackTimer();
+  if (!speechDisplay) return;
+
+  const ranges = getWordRanges(chunk);
+  if (ranges.length <= 1) return;
+
+  let index = 0;
+  const wordsPerMinute = 145 * Math.max(rate, 0.65);
+  const intervalMs = Math.max(180, Math.round(60000 / wordsPerMinute));
+
+  speechFallbackTimer = window.setInterval(() => {
+    if (speechStopped || window.speechSynthesis?.paused) return;
+
+    index = Math.min(index + 1, ranges.length - 1);
+    renderSpeechChunk(chunk, ranges[index].start);
+
+    if (index >= ranges.length - 1) {
+      clearSpeechFallbackTimer();
+    }
+  }, intervalMs);
+}
+
+function speakNextChunk() {
+  if (speechStopped || speechQueueIndex >= speechQueue.length || !window.speechSynthesis) {
+    if (speechDisplay && speechQueueIndex >= speechQueue.length) {
+      setSpeechDisplayMessage("Playback finished.");
+    }
+    clearSpeechFallbackTimer();
+    return;
+  }
+
+  const chunk = speechQueue[speechQueueIndex];
+  const utterance = new SpeechSynthesisUtterance(chunk);
+  const controls = utteranceControls;
+  const selectedVoice = voices.find((voice) => voice.name === controls.voiceSelect.value);
+  utterance.lang = selectedVoice?.lang || "en-US";
+  utterance.voice = selectedVoice || null;
+  utterance.rate = Number(controls.rateInput.value);
+  utterance.pitch = Number(controls.pitchInput.value);
+  renderSpeechChunk(chunk, 0);
+  startSpeechFallbackHighlight(chunk, utterance.rate);
+  utterance.onboundary = (event) => {
+    if (event.name === "word" || event.charIndex >= 0) {
+      clearSpeechFallbackTimer();
+      renderSpeechChunk(chunk, event.charIndex);
+    }
+  };
+  utterance.onend = () => {
+    clearSpeechFallbackTimer();
+    speechQueueIndex += 1;
+    speakNextChunk();
+  };
+  window.speechSynthesis.speak(utterance);
+}
+
+let utteranceControls = {
+  voiceSelect,
+  rateInput,
+  pitchInput,
+};
+
+function speakTextFrom(text, controls, displayElement = null) {
+  speechQueue = splitTextForSpeech(text);
+  if (!speechQueue.length || !window.speechSynthesis) return;
+
+  speechStopped = true;
+  window.speechSynthesis.cancel();
+  speechStopped = false;
+  speechQueueIndex = 0;
+  utteranceControls = controls;
+  speechDisplay = displayElement;
+  setSpeechDisplayMessage("Starting playback...");
+
+  speakNextChunk();
+}
+
+function speakText() {
+  speakTextFrom(sourceText.value, { voiceSelect, rateInput, pitchInput });
+}
+
+function speakReaderText() {
+  speakTextFrom(
+    readerText.value,
+    {
+      voiceSelect: readerVoiceSelect,
+      rateInput: readerRateInput,
+      pitchInput: readerPitchInput,
+    },
+    readerCurrentText,
+  );
+}
+
+function pauseSpeech() {
+  if (!window.speechSynthesis) return;
+  if (window.speechSynthesis.paused) {
+    window.speechSynthesis.resume();
+    pauseBtn.textContent = "Pause";
+    readerPauseBtn.textContent = "Pause";
+  } else {
+    window.speechSynthesis.pause();
+    pauseBtn.textContent = "Resume";
+    readerPauseBtn.textContent = "Resume";
+  }
+}
+
+function stopSpeech() {
+  if (!window.speechSynthesis) return;
+  speechStopped = true;
+  speechQueue = [];
+  speechQueueIndex = 0;
+  clearSpeechFallbackTimer();
+  window.speechSynthesis.cancel();
+  pauseBtn.textContent = "Pause";
+  readerPauseBtn.textContent = "Pause";
+  setSpeechDisplayMessage("Playback stopped.");
+}
+
+function formatTimer(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function startTimer() {
+  recordingStartedAt = Date.now();
+  recordingTimer.textContent = "00:00";
+  timerId = window.setInterval(() => {
+    recordingTimer.textContent = formatTimer(Date.now() - recordingStartedAt);
+  }, 250);
+}
+
+function stopTimer() {
+  window.clearInterval(timerId);
+  timerId = null;
+}
+
+function startRecognition() {
+  transcript = "";
+  transcriptConfidence = 0;
+  transcriptText.textContent = "Listening...";
+
+  if (!SpeechRecognition) {
+    transcriptText.textContent =
+      "This browser has no built-in speech recognition. The recording will work, but text analysis will be limited.";
+    return;
+  }
+
+  recognition = new SpeechRecognition();
+  recognition.lang = "en-US";
+  recognition.interimResults = true;
+  recognition.continuous = true;
+
+  recognition.onresult = (event) => {
+    const results = Array.from(event.results);
+    transcript = results.map((result) => result[0].transcript).join(" ");
+    const confidences = results
+      .map((result) => result[0].confidence)
+      .filter((confidence) => Number.isFinite(confidence) && confidence > 0);
+    transcriptConfidence = confidences.length
+      ? confidences.reduce((sum, confidence) => sum + confidence, 0) / confidences.length
+      : transcriptConfidence;
+    transcriptText.textContent = transcript || "Listening...";
+  };
+
+  recognition.onerror = () => {
+    transcriptText.textContent =
+      "Speech recognition is unavailable. Check microphone permission and browser support.";
+  };
+
+  recognition.start();
+}
+
+function stopRecognition() {
+  if (!recognition) return;
+  recognition.stop();
+  recognition = null;
+}
+
+function compareWords(expectedText, spokenText) {
+  const expected = tokenize(expectedText);
+  const spoken = tokenize(spokenText);
+  const spokenSet = new Set(spoken);
+  const matched = expected.filter((word) => spokenSet.has(word)).length;
+  const coverage = expected.length ? matched / expected.length : 0;
+  const missing = expected.filter((word) => !spokenSet.has(word)).slice(0, 8);
+  return { coverage, missing, expectedCount: expected.length, spokenCount: spoken.length };
+}
+
+function levenshteinDistance(a, b) {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const matrix = Array.from({ length: rows }, () => Array(cols).fill(0));
+
+  for (let row = 0; row < rows; row += 1) matrix[row][0] = row;
+  for (let col = 0; col < cols; col += 1) matrix[0][col] = col;
+
+  for (let row = 1; row < rows; row += 1) {
+    for (let col = 1; col < cols; col += 1) {
+      const cost = a[row - 1] === b[col - 1] ? 0 : 1;
+      matrix[row][col] = Math.min(
+        matrix[row - 1][col] + 1,
+        matrix[row][col - 1] + 1,
+        matrix[row - 1][col - 1] + cost,
+      );
+    }
+  }
+
+  return matrix[a.length][b.length];
+}
+
+function wordSimilarity(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const longest = Math.max(a.length, b.length);
+  return longest ? Math.max(0, 1 - levenshteinDistance(a, b) / longest) : 0;
+}
+
+function alignWords(expected, spoken) {
+  const rows = expected.length + 1;
+  const cols = spoken.length + 1;
+  const dp = Array.from({ length: rows }, () => Array(cols).fill(0));
+  const back = Array.from({ length: rows }, () => Array(cols).fill(null));
+
+  for (let row = 1; row < rows; row += 1) {
+    dp[row][0] = row;
+    back[row][0] = "delete";
+  }
+
+  for (let col = 1; col < cols; col += 1) {
+    dp[0][col] = col;
+    back[0][col] = "insert";
+  }
+
+  for (let row = 1; row < rows; row += 1) {
+    for (let col = 1; col < cols; col += 1) {
+      const similarity = wordSimilarity(expected[row - 1], spoken[col - 1]);
+      const substitutionCost = similarity > 0.55 ? 1 - similarity : 1.05;
+      const candidates = [
+        { cost: dp[row - 1][col - 1] + substitutionCost, move: "match" },
+        { cost: dp[row - 1][col] + 1, move: "delete" },
+        { cost: dp[row][col - 1] + 1, move: "insert" },
+      ];
+      const best = candidates.sort((a, b) => a.cost - b.cost)[0];
+      dp[row][col] = best.cost;
+      back[row][col] = best.move;
+    }
+  }
+
+  const aligned = [];
+  let row = expected.length;
+  let col = spoken.length;
+
+  while (row > 0 || col > 0) {
+    const move = back[row][col];
+
+    if (move === "match") {
+      aligned.unshift({
+        expected: expected[row - 1],
+        spoken: spoken[col - 1],
+        spokenIndex: col - 1,
+      });
+      row -= 1;
+      col -= 1;
+    } else if (move === "delete") {
+      aligned.unshift({
+        expected: expected[row - 1],
+        spoken: "",
+        spokenIndex: -1,
+      });
+      row -= 1;
+    } else {
+      col -= 1;
+    }
+  }
+
+  return aligned;
+}
+
+function scorePace(pace) {
+  if (!Number.isFinite(pace) || pace <= 0) return 0;
+  if (pace >= 95 && pace <= 165) return 100;
+  return Math.max(25, 100 - Math.abs(130 - pace));
+}
+
+function buildWordAnalysis(expectedText, spokenText, durationMs) {
+  const expected = tokenize(expectedText);
+  const spoken = tokenize(spokenText);
+  const aligned = alignWords(expected, spoken);
+  const durationMinutes = Math.max(durationMs / 60000, 1 / 60);
+  const pace = Math.round(spoken.length / durationMinutes);
+  const paceScore = scorePace(pace);
+  const recognitionConfidence = transcriptConfidence || 0.68;
+  const spokenCount = Math.max(spoken.length, 1);
+  const durationSeconds = durationMs / 1000;
+
+  const rows = aligned.map((item, index) => {
+    const similarity = wordSimilarity(item.expected, item.spoken);
+    const exact = item.expected === item.spoken;
+    const pronunciation = item.spoken
+      ? Math.round(similarity * 82 + recognitionConfidence * 18)
+      : 0;
+    const accuracy = exact ? 100 : Math.round(similarity * 100);
+    const fluency = item.spoken ? Math.round((paceScore + accuracy) / 2) : 0;
+    const startTime =
+      item.spokenIndex >= 0 ? (item.spokenIndex / spokenCount) * durationSeconds : null;
+    const endTime =
+      item.spokenIndex >= 0 ? ((item.spokenIndex + 1) / spokenCount) * durationSeconds : null;
+
+    return {
+      id: index,
+      expected: item.expected,
+      spoken: item.spoken || "missed",
+      spokenIndex: item.spokenIndex,
+      startTime,
+      endTime,
+      pace: paceScore,
+      pronunciation: Math.max(0, Math.min(100, pronunciation)),
+      accuracy: Math.max(0, Math.min(100, accuracy)),
+      fluency: Math.max(0, Math.min(100, fluency)),
+      needsDrill: !item.spoken || pronunciation < 82 || accuracy < 80,
+    };
+  });
+
+  const average = (key) =>
+    rows.length
+      ? Math.round(rows.reduce((sum, row) => sum + row[key], 0) / rows.length)
+      : 0;
+
+  return {
+    rows,
+    summary: {
+      pace,
+      paceScore,
+      pronunciation: average("pronunciation"),
+      accuracy: average("accuracy"),
+      fluency: average("fluency"),
+    },
+  };
+}
+
+function metricClass(score) {
+  if (score >= 85) return "is-good";
+  if (score >= 65) return "is-mid";
+  return "is-low";
+}
+
+const phoneticHints = {
+  a: "/eI/",
+  against: "/e'genst/",
+  and: "/aend/",
+  book: "/buk/",
+  brown: "/braun/",
+  check: "/tSek/",
+  clear: "/klIr/",
+  dog: "/dog/",
+  english: "/'INglIS/",
+  every: "/'evri/",
+  feedback: "/'fi:dbaek/",
+  first: "/f3:rst/",
+  fox: "/faks/",
+  improve: "/Im'pru:v/",
+  jumps: "/dZVmps/",
+  lazy: "/'leIzi/",
+  natural: "/'naetSrel/",
+  over: "/'ouver/",
+  practice: "/'praektIs/",
+  pronunciation: "/pre,nVnsi'eISen/",
+  quickly: "/'kwIkli/",
+  repeat: "/rI'pi:t/",
+  slowly: "/'slouli/",
+  sound: "/saund/",
+  speech: "/spi:tS/",
+  text: "/tekst/",
+  the: "/de/",
+  then: "/den/",
+  to: "/tu:/",
+  try: "/traI/",
+  voice: "/voIs/",
+  word: "/w3:rd/",
+};
+
+function getPhoneticHint(word) {
+  const normalized = normalizeText(word);
+  if (phoneticHints[normalized]) return phoneticHints[normalized];
+
+  return `/${normalized
+    .replace(/th/g, "th")
+    .replace(/sh/g, "sh")
+    .replace(/ch/g, "ch")
+    .replace(/ph/g, "f")
+    .replace(/tion$/g, "shen")
+    .replace(/ough/g, "oh")}/`;
+}
+
+function scoreRetryWord(expected, spoken) {
+  const spokenWord = tokenize(spoken)[0] || "";
+  const similarity = wordSimilarity(normalizeText(expected), spokenWord);
+  return {
+    spoken: spokenWord || "not recognized",
+    pronunciation: Math.round(similarity * 88 + 12),
+    accuracy: Math.round(similarity * 100),
+  };
+}
+
+function renderWordAnalysis(analysis) {
+  wordAnalysis = analysis.rows;
+  wordAnalysisList.textContent = "";
+  drillWordList.textContent = "";
+
+  const drillRows = wordAnalysis.filter((row) => row.needsDrill);
+  wordAnalysisSummary.textContent = wordAnalysis.length
+    ? `${wordAnalysis.length} words checked, ${drillRows.length} need attention.`
+    : "Record speech to see word scores.";
+  startDrillBtn.disabled = drillRows.length === 0;
+  drillStatus.textContent = drillRows.length
+    ? "Use each drill card to hear your attempt, compare slow/normal model audio, and record the word again."
+    : "No correction drill needed for this recording.";
+
+  wordAnalysis.forEach((row) => {
+    const card = document.createElement("article");
+    card.className = `word-card ${row.needsDrill ? "needs-drill" : ""}`;
+
+    const wordBlock = document.createElement("div");
+    const expected = document.createElement("strong");
+    expected.textContent = row.expected;
+    const heard = document.createElement("small");
+    heard.textContent = `heard: ${row.spoken}`;
+    wordBlock.append(expected, heard);
+    card.append(wordBlock);
+
+    [
+      ["pron", row.pronunciation],
+      ["acc", row.accuracy],
+      ["pace", row.pace],
+      ["flow", row.fluency],
+    ].forEach(([label, score]) => {
+      const metric = document.createElement("span");
+      metric.className = metricClass(score);
+      metric.textContent = score;
+      const metricLabel = document.createElement("small");
+      metricLabel.textContent = label;
+      metric.append(metricLabel);
+      card.append(metric);
+    });
+
+    wordAnalysisList.append(card);
+  });
+
+  drillRows.forEach((row) => {
+    drillWordList.append(createDrillCard(row));
+  });
+}
+
+function createDrillCard(row) {
+  const card = document.createElement("article");
+  card.className = "drill-card";
+  card.dataset.wordId = row.id;
+
+  const main = document.createElement("div");
+  main.className = "drill-card-main";
+
+  const word = document.createElement("strong");
+  word.textContent = row.expected;
+
+  const phonetic = document.createElement("span");
+  phonetic.className = "phonetic-hint";
+  phonetic.textContent = getPhoneticHint(row.expected);
+
+  const heard = document.createElement("small");
+  heard.textContent = `heard: ${row.spoken}`;
+
+  main.append(word, phonetic, heard);
+
+  const score = document.createElement("span");
+  score.className = `drill-score ${metricClass(row.pronunciation)}`;
+  score.textContent = `${row.pronunciation}`;
+
+  const actions = document.createElement("div");
+  actions.className = "drill-actions";
+
+  [
+    ["Your + model", () => runDrillForWord(row)],
+    ["Slow model", () => speakModelWord(row.expected, 0.68)],
+    ["Normal model", () => speakModelWord(row.expected, 0.95)],
+    ["Record again", () => recordWordRetry(row, card)],
+  ].forEach(([label, handler]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", handler);
+    actions.append(button);
+  });
+
+  const retry = document.createElement("p");
+  retry.className = "retry-result";
+  retry.textContent = "Repeat this word until the retry score improves.";
+
+  card.append(main, score, actions, retry);
+  return card;
+}
+
+function waitForRecordingMetadata() {
+  if (Number.isFinite(recordingPlayer.duration) && recordingPlayer.duration > 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    recordingPlayer.addEventListener("loadedmetadata", resolve, { once: true });
+  });
+}
+
+async function playRecordingSegment(startTime, endTime) {
+  if (!recordingPlayer.src || startTime === null || endTime === null) return false;
+
+  await waitForRecordingMetadata();
+  const duration = recordingPlayer.duration || latestRecordingDurationMs / 1000;
+  const start = Math.max(0, Math.min(startTime, duration));
+  const end = Math.max(start + 0.25, Math.min(endTime + 0.12, duration));
+
+  recordingPlayer.pause();
+  recordingPlayer.currentTime = start;
+  try {
+    await recordingPlayer.play();
+  } catch {
+    return false;
+  }
+
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      recordingPlayer.pause();
+      resolve(true);
+    }, Math.max(250, (end - start) * 1000));
+  });
+}
+
+function speakModelWord(word, rate = 0.82) {
+  return new Promise((resolve) => {
+    if (!window.speechSynthesis) {
+      resolve();
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(word);
+    const selectedVoice = voices.find((voice) => voice.name === voiceSelect.value);
+    utterance.lang = selectedVoice?.lang || "en-US";
+    utterance.voice = selectedVoice || null;
+    utterance.rate = rate;
+    utterance.pitch = Number(pitchInput.value);
+    utterance.onend = resolve;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  });
+}
+
+function recognizeSingleWord(timeoutMs = 2600) {
+  return new Promise((resolve) => {
+    if (!SpeechRecognition) {
+      resolve({ text: "", confidence: 0 });
+      return;
+    }
+
+    const retryRecognition = new SpeechRecognition();
+    let bestText = "";
+    let bestConfidence = 0;
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        retryRecognition.stop();
+      } catch {
+        // Recognition may already be stopped by the browser.
+      }
+      resolve({ text: bestText, confidence: bestConfidence });
+    };
+
+    retryRecognition.lang = "en-US";
+    retryRecognition.interimResults = false;
+    retryRecognition.continuous = false;
+    retryRecognition.onresult = (event) => {
+      const result = event.results?.[0]?.[0];
+      bestText = result?.transcript || "";
+      bestConfidence = result?.confidence || 0;
+      finish();
+    };
+    retryRecognition.onerror = finish;
+    retryRecognition.onend = finish;
+    retryRecognition.start();
+    window.setTimeout(finish, timeoutMs);
+  });
+}
+
+async function recordWordRetry(row, card) {
+  const retry = card.querySelector(".retry-result");
+  const score = card.querySelector(".drill-score");
+
+  retry.textContent = `Say "${row.expected}" now...`;
+  const result = await recognizeSingleWord();
+  const retryScore = scoreRetryWord(row.expected, result.text);
+
+  score.textContent = retryScore.pronunciation.toString();
+  score.className = `drill-score ${metricClass(retryScore.pronunciation)}`;
+  retry.textContent = `heard: ${retryScore.spoken}. retry pronunciation ${retryScore.pronunciation}, accuracy ${retryScore.accuracy}.`;
+
+  if (retryScore.pronunciation < 82) {
+    await speakModelWord(row.expected, 0.72);
+  }
+}
+
+async function runDrillForWord(row) {
+  drillStatus.textContent = `Your attempt: ${row.spoken}. Model: ${row.expected}.`;
+
+  if (row.startTime !== null && row.endTime !== null) {
+    const played = await playRecordingSegment(row.startTime, row.endTime);
+    if (!played) {
+      drillStatus.textContent = `Could not play your segment. Model: ${row.expected}.`;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 220));
+  } else {
+    drillStatus.textContent = `No recorded segment for "${row.expected}". Listen to the model word.`;
+  }
+
+  await speakModelWord(row.expected);
+}
+
+function resetPronunciationAnalysis() {
+  paceMetric.textContent = "--";
+  pronunciationMetric.textContent = "--";
+  accuracyMetric.textContent = "--";
+  fluencyMetric.textContent = "--";
+  wordAnalysis = [];
+  wordAnalysisList.textContent = "";
+  drillWordList.textContent = "";
+  wordAnalysisSummary.textContent = "Record speech to see word scores.";
+  drillStatus.textContent = "Recording new attempt...";
+  startDrillBtn.disabled = true;
+}
+
+async function runDrillQueue() {
+  const drillRows = wordAnalysis.filter((row) => row.needsDrill).slice(0, 8);
+  if (!drillRows.length) return;
+
+  startDrillBtn.disabled = true;
+
+  for (const row of drillRows) {
+    drillStatus.textContent = `Drilling "${row.expected}"`;
+    await runDrillForWord(row);
+    await new Promise((resolve) => window.setTimeout(resolve, 450));
+  }
+
+  drillStatus.textContent = "Drill finished. Record again to check improvement.";
+  startDrillBtn.disabled = false;
+}
+
+function renderFeedback(durationMs) {
+  const durationMinutes = Math.max(durationMs / 60000, 1 / 60);
+  const comparison = compareWords(sourceText.value, transcript);
+  const pace = Math.round(comparison.spokenCount / durationMinutes);
+  const coverageScore = Math.round(comparison.coverage * 100);
+  const paceScore = scorePace(pace);
+  const analysis = buildWordAnalysis(sourceText.value, transcript, durationMs);
+  const score = transcript ? Math.round(coverageScore * 0.72 + paceScore * 0.28) : 45;
+
+  practiceScore.textContent = score.toString();
+  paceMetric.textContent = `${analysis.summary.pace} wpm`;
+  pronunciationMetric.textContent = `${analysis.summary.pronunciation}%`;
+  accuracyMetric.textContent = `${analysis.summary.accuracy}%`;
+  fluencyMetric.textContent = `${analysis.summary.fluency}%`;
+  scoreSummary.textContent = transcript
+    ? `Text match: ${coverageScore}%. Pace: ${pace} words per minute.`
+    : "Recording saved, but the browser did not return recognized text.";
+  renderWordAnalysis(analysis);
+
+  const tips = [];
+
+  if (!transcript) {
+    tips.push("For full feedback, open the service in Chrome or Edge and allow microphone access.");
+  }
+
+  if (comparison.missing.length) {
+    tips.push(`Repeat words that were not recognized confidently: ${comparison.missing.join(", ")}.`);
+  }
+
+  if (pace < 95) {
+    tips.push("The pace is slow: link short function words with nearby words to sound more natural.");
+  } else if (pace > 165) {
+    tips.push("The pace is fast: pause after meaning groups and finish word endings more clearly.");
+  } else {
+    tips.push("The pace is good: now focus on stress in the key words of the phrase.");
+  }
+
+  if (comparison.coverage < 0.65 && transcript) {
+    tips.push("Practice the phrase in parts first: 5-8 words, listen, then repeat.");
+  }
+
+  feedbackList.innerHTML = tips.map((tip) => `<li>${tip}</li>`).join("");
+}
+
+async function toggleRecording() {
+  if (mediaRecorder?.state === "recording") {
+    mediaRecorder.stop();
+    stopRecognition();
+    stopTimer();
+    recordBtn.classList.remove("is-recording");
+    recordBtn.textContent = "Record speech";
+    return;
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  resetPronunciationAnalysis();
+  audioChunks = [];
+  mediaRecorder = new MediaRecorder(stream);
+
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data.size) audioChunks.push(event.data);
+  };
+
+  mediaRecorder.onstop = () => {
+    const durationMs = Date.now() - recordingStartedAt;
+    latestRecordingDurationMs = durationMs;
+    const blob = new Blob(audioChunks, { type: "audio/webm" });
+    recordingPlayer.src = URL.createObjectURL(blob);
+    recordingPlayer.hidden = false;
+    playRecordingBtn.disabled = false;
+    stream.getTracks().forEach((track) => track.stop());
+    renderFeedback(durationMs);
+  };
+
+  mediaRecorder.start();
+  startRecognition();
+  startTimer();
+  recordBtn.classList.add("is-recording");
+  recordBtn.textContent = "Stop recording";
+}
+
+function updateSupportStatus() {
+  const speech = Boolean(window.speechSynthesis);
+  const mic = Boolean(navigator.mediaDevices?.getUserMedia);
+  const recognition = Boolean(SpeechRecognition);
+  const supported = [speech, mic, recognition].filter(Boolean).length;
+  supportStatus.textContent = `${supported}/3 APIs available`;
+}
+
+async function readUploadedFile(file) {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  const isPdf = extension === "pdf" || file.type === "application/pdf";
+  return isPdf ? extractTextFromPdf(file) : extractTextFromFile(file.name, await file.text());
+}
+
+function activateScreen(screenId) {
+  tabButtons.forEach((button) => {
+    const isActive = button.dataset.screen === screenId;
+    button.classList.toggle("is-active", isActive);
+  });
+
+  screens.forEach((screen) => {
+    screen.classList.toggle("is-active", screen.id === screenId);
+  });
+
+  stopSpeech();
+}
+
+tabButtons.forEach((button) => {
+  button.addEventListener("click", () => activateScreen(button.dataset.screen));
+});
+
+sourceText.addEventListener("input", updateTextStats);
+readerText.addEventListener("input", updateReaderTextStats);
+
+readerFileInput.addEventListener("change", async () => {
+  const file = readerFileInput.files?.[0];
+  if (!file) return;
+
+  readerFileName.textContent = `Loading ${file.name}...`;
+  readerCurrentText.textContent = "Reading file...";
+
+  try {
+    const extractedText = await readUploadedFile(file);
+
+    if (!extractedText.trim()) {
+      throw new Error("No readable text found in this file.");
+    }
+
+    readerText.value = extractedText;
+    readerFileName.textContent = file.name;
+    readerCurrentText.textContent = "File loaded. Start playback to see the current phrase.";
+    updateReaderTextStats();
+  } catch (error) {
+    readerFileName.textContent = `Could not read ${file.name}`;
+    readerCurrentText.textContent =
+      error instanceof Error ? error.message : "Could not read the selected file.";
+  }
+});
+
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files?.[0];
+  if (!file) return;
+
+  fileName.textContent = `Loading ${file.name}...`;
+
+  try {
+    const extractedText = await readUploadedFile(file);
+
+    if (!extractedText.trim()) {
+      throw new Error("No readable text found in this file.");
+    }
+
+    sourceText.value = extractedText;
+    fileName.textContent = file.name;
+    updateTextStats();
+  } catch (error) {
+    fileName.textContent = `Could not read ${file.name}`;
+    transcriptText.textContent =
+      error instanceof Error ? error.message : "Could not read the selected file.";
+  }
+});
+
+readerSpeakBtn.addEventListener("click", speakReaderText);
+readerPauseBtn.addEventListener("click", pauseSpeech);
+readerStopBtn.addEventListener("click", stopSpeech);
+speakBtn.addEventListener("click", speakText);
+pauseBtn.addEventListener("click", pauseSpeech);
+stopBtn.addEventListener("click", stopSpeech);
+startDrillBtn.addEventListener("click", runDrillQueue);
+recordBtn.addEventListener("click", () => {
+  toggleRecording().catch(() => {
+    recordBtn.classList.remove("is-recording");
+    recordBtn.textContent = "Record speech";
+    transcriptText.textContent = "Could not access the microphone.";
+    stopTimer();
+  });
+});
+playRecordingBtn.addEventListener("click", () => recordingPlayer.play());
+
+if (window.speechSynthesis) {
+  loadVoices();
+  window.speechSynthesis.onvoiceschanged = loadVoices;
+}
+
+updateTextStats();
+updateReaderTextStats();
+updateSupportStatus();
