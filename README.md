@@ -13,13 +13,14 @@ Eng Coach is an MVP web service for English practice.
 - Adjust voice, speed, and pitch.
 - Record speech from the microphone.
 - Get first-pass feedback on text match, pace, pronunciation, accuracy, and fluency.
+- Use a free local Web Audio analyzer for voice time, silence, pauses, volume stability, and clipping.
 - Review word-by-word scores after a microphone recording.
 - Run Word drill 2.0: user segment, slow model, normal model, retry recording, and per-word retry score.
 
 ## Run locally
 
 ```powershell
-python -m http.server 5173 --bind 127.0.0.1
+npm run dev
 ```
 
 Then open:
@@ -47,6 +48,33 @@ The endpoint forwards recordings to OpenAI audio transcriptions with:
 
 GitHub Pages can host the static UI, but it cannot keep an API key secret or run `/api/transcribe`.
 Use Vercel or another backend-capable host for Speech API mode.
+
+## Deploy to UltraVDS or another VPS
+
+Install Node.js 20+ on the server, clone the repository, and create `.env`:
+
+```text
+OPENAI_API_KEY=your_api_key
+PORT=5173
+```
+
+Start the app:
+
+```bash
+npm install
+npm start
+```
+
+For production, run it behind Nginx with HTTPS. Browsers require HTTPS for reliable microphone access
+outside `localhost`.
+
+Recommended flow:
+
+1. Point a domain or subdomain to the VPS.
+2. Run the Node app on `127.0.0.1:5173` or `0.0.0.0:5173`.
+3. Put Nginx in front of it.
+4. Add a TLS certificate with Certbot.
+5. Keep the app alive with `pm2` or a systemd service.
 
 ## Deploy to GitHub Pages
 

@@ -40,6 +40,14 @@ const accuracyMetric = document.querySelector("#accuracyMetric");
 const fluencyMetric = document.querySelector("#fluencyMetric");
 const wordAnalysisSummary = document.querySelector("#wordAnalysisSummary");
 const wordAnalysisList = document.querySelector("#wordAnalysisList");
+const audioAnalysisSummary = document.querySelector("#audioAnalysisSummary");
+const voiceTimeMetric = document.querySelector("#voiceTimeMetric");
+const silenceMetric = document.querySelector("#silenceMetric");
+const pauseMetric = document.querySelector("#pauseMetric");
+const volumeMetric = document.querySelector("#volumeMetric");
+const stabilityMetric = document.querySelector("#stabilityMetric");
+const clippingMetric = document.querySelector("#clippingMetric");
+const audioAnalysisTips = document.querySelector("#audioAnalysisTips");
 const startDrillBtn = document.querySelector("#startDrillBtn");
 const drillStatus = document.querySelector("#drillStatus");
 const drillWordList = document.querySelector("#drillWordList");
@@ -59,6 +67,7 @@ let transcriptConfidence = 0;
 let latestRecordingDurationMs = 0;
 let latestSpeechWindow = null;
 let latestTranscriptionWords = [];
+let latestAudioAnalysis = null;
 let wordAnalysis = [];
 let speechQueue = [];
 let speechQueueIndex = 0;
@@ -899,6 +908,155 @@ async function detectSpeechWindow(blob) {
   }
 }
 
+async function analyzeAudioSignal(blob) {
+  try {
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextConstructor) return null;
+
+    const audioContext = new AudioContextConstructor();
+    const buffer = await blob.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(buffer);
+    const channel = audioBuffer.getChannelData(0);
+    const sampleRate = audioBuffer.sampleRate;
+    const frameSeconds = 0.04;
+    const frameSize = Math.max(1, Math.floor(sampleRate * frameSeconds));
+    const frames = [];
+    let clippedSamples = 0;
+
+    for (let offset = 0; offset < channel.length; offset += frameSize) {
+      let sum = 0;
+      let peak = 0;
+      const end = Math.min(offset + frameSize, channel.length);
+
+      for (let index = offset; index < end; index += 1) {
+        const sample = channel[index];
+        const absolute = Math.abs(sample);
+        sum += sample * sample;
+        peak = Math.max(peak, absolute);
+        if (absolute > 0.98) clippedSamples += 1;
+      }
+
+      frames.push({
+        rms: Math.sqrt(sum / Math.max(1, end - offset)),
+        peak,
+        start: offset / sampleRate,
+        end: end / sampleRate,
+      });
+    }
+
+    const maxRms = Math.max(...frames.map((frame) => frame.rms), 0);
+    const threshold = Math.max(0.012, maxRms * 0.16);
+    const activeFrames = frames.filter((frame) => frame.rms >= threshold);
+    const firstActive = frames.findIndex((frame) => frame.rms >= threshold);
+    const lastActive = frames.findLastIndex((frame) => frame.rms >= threshold);
+    const duration = audioBuffer.duration;
+    const voiceTime = activeFrames.length * frameSeconds;
+    const silenceRatio = duration ? Math.max(0, 1 - voiceTime / duration) : 1;
+    const activeRmsValues = activeFrames.map((frame) => frame.rms);
+    const averageRms = activeRmsValues.length
+      ? activeRmsValues.reduce((sum, value) => sum + value, 0) / activeRmsValues.length
+      : 0;
+    const rmsVariance = activeRmsValues.length
+      ? activeRmsValues.reduce((sum, value) => sum + (value - averageRms) ** 2, 0) /
+        activeRmsValues.length
+      : 0;
+    const rmsStdDev = Math.sqrt(rmsVariance);
+    const stability = averageRms ? Math.max(0, 100 - (rmsStdDev / averageRms) * 130) : 0;
+    const clippingRatio = channel.length ? clippedSamples / channel.length : 0;
+
+    let pauseCount = 0;
+    let currentPause = 0;
+    frames.forEach((frame) => {
+      if (frame.rms < threshold) {
+        currentPause += frameSeconds;
+      } else {
+        if (currentPause >= 0.35) pauseCount += 1;
+        currentPause = 0;
+      }
+    });
+    if (currentPause >= 0.35) pauseCount += 1;
+
+    const speechWindow =
+      firstActive >= 0 && lastActive >= firstActive
+        ? {
+            start: Math.max(0, frames[firstActive].start - 0.08),
+            end: Math.min(duration, frames[lastActive].end + 0.16),
+          }
+        : null;
+
+    await audioContext.close();
+
+    return {
+      averageRms,
+      clippingRatio,
+      duration,
+      pauseCount,
+      signalScore: Math.round(
+        Math.max(0, Math.min(100, stability * 0.45 + (1 - silenceRatio) * 35 + (1 - clippingRatio) * 20)),
+      ),
+      silenceRatio,
+      speechWindow,
+      stability: Math.round(stability),
+      voiceTime,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function renderAudioAnalysis(analysis) {
+  latestAudioAnalysis = analysis;
+
+  if (!analysis) {
+    audioAnalysisSummary.textContent = "Audio analysis is unavailable in this browser.";
+    return;
+  }
+
+  const silencePercent = Math.round(analysis.silenceRatio * 100);
+  const clippingPercent = Math.round(analysis.clippingRatio * 1000) / 10;
+  const volumePercent = Math.round(Math.min(100, analysis.averageRms * 420));
+  const tips = [];
+
+  voiceTimeMetric.textContent = `${analysis.voiceTime.toFixed(1)}s`;
+  silenceMetric.textContent = `${silencePercent}%`;
+  pauseMetric.textContent = analysis.pauseCount.toString();
+  volumeMetric.textContent = `${volumePercent}%`;
+  stabilityMetric.textContent = `${analysis.stability}%`;
+  clippingMetric.textContent = `${clippingPercent}%`;
+  audioAnalysisSummary.textContent = `Local signal score: ${analysis.signalScore}/100`;
+
+  if (volumePercent < 18) {
+    tips.push("Move closer to the microphone or speak a little louder.");
+  }
+
+  if (clippingPercent > 1) {
+    tips.push("The microphone is clipping. Reduce input gain or move slightly farther away.");
+  }
+
+  if (silencePercent > 45) {
+    tips.push("There is a lot of silence. Start speaking sooner and keep the phrase connected.");
+  }
+
+  if (analysis.pauseCount > 3) {
+    tips.push("Too many long pauses. Practice the phrase in smaller chunks, then connect them.");
+  }
+
+  if (analysis.stability < 55) {
+    tips.push("Volume is uneven. Keep a steadier distance from the microphone.");
+  }
+
+  if (!tips.length) {
+    tips.push("Signal quality looks usable. Focus on pronunciation and rhythm.");
+  }
+
+  audioAnalysisTips.textContent = "";
+  tips.forEach((tip) => {
+    const item = document.createElement("li");
+    item.textContent = tip;
+    audioAnalysisTips.append(item);
+  });
+}
+
 async function transcribeWithSpeechApi(blob) {
   const formData = new FormData();
   formData.append("file", blob, "recording.webm");
@@ -1035,6 +1193,15 @@ function resetPronunciationAnalysis() {
   wordAnalysis = [];
   latestSpeechWindow = null;
   latestTranscriptionWords = [];
+  latestAudioAnalysis = null;
+  voiceTimeMetric.textContent = "--";
+  silenceMetric.textContent = "--";
+  pauseMetric.textContent = "--";
+  volumeMetric.textContent = "--";
+  stabilityMetric.textContent = "--";
+  clippingMetric.textContent = "--";
+  audioAnalysisSummary.textContent = "Recording new audio sample...";
+  audioAnalysisTips.textContent = "";
   wordAnalysisList.textContent = "";
   drillWordList.textContent = "";
   wordAnalysisSummary.textContent = "Record speech to see word scores.";
@@ -1129,7 +1296,9 @@ async function toggleRecording() {
     recordingPlayer.hidden = false;
     playRecordingBtn.disabled = false;
     drillStatus.textContent = "Analyzing voice timing...";
-    latestSpeechWindow = await detectSpeechWindow(blob);
+    const audioAnalysis = await analyzeAudioSignal(blob);
+    renderAudioAnalysis(audioAnalysis);
+    latestSpeechWindow = audioAnalysis?.speechWindow || (await detectSpeechWindow(blob));
     const browserTranscript = transcript;
     const browserScore = scoreTranscriptCandidate(sourceText.value, browserTranscript);
     try {

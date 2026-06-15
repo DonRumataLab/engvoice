@@ -212,6 +212,42 @@
                 <div id="wordAnalysisList" class="word-analysis-list"></div>
               </section>
 
+              <section class="audio-analysis-panel" aria-label="Free audio analyzer">
+                <div class="panel-header-row">
+                  <h2>Free audio analyzer</h2>
+                  <span id="audioAnalysisSummary" class="muted">Record speech to analyze the signal.</span>
+                </div>
+                <div class="audio-metrics-grid">
+                  <article>
+                    <span id="voiceTimeMetric">--</span>
+                    <small>voice time</small>
+                  </article>
+                  <article>
+                    <span id="silenceMetric">--</span>
+                    <small>silence</small>
+                  </article>
+                  <article>
+                    <span id="pauseMetric">--</span>
+                    <small>pauses</small>
+                  </article>
+                  <article>
+                    <span id="volumeMetric">--</span>
+                    <small>volume</small>
+                  </article>
+                  <article>
+                    <span id="stabilityMetric">--</span>
+                    <small>stability</small>
+                  </article>
+                  <article>
+                    <span id="clippingMetric">--</span>
+                    <small>clipping</small>
+                  </article>
+                </div>
+                <ul id="audioAnalysisTips" class="audio-analysis-tips">
+                  <li>Audio signal tips will appear after recording.</li>
+                </ul>
+              </section>
+
               <section class="drill-panel" aria-label="Error correction mode">
                 <div class="panel-header-row">
                   <h2>Error drill</h2>
