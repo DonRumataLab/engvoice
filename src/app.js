@@ -484,6 +484,23 @@ function compareWords(expectedText, spokenText) {
   return { coverage, missing, expectedCount: expected.length, spokenCount: spoken.length };
 }
 
+function scoreTranscriptCandidate(expectedText, spokenText) {
+  const expected = tokenize(expectedText);
+  const spoken = tokenize(spokenText);
+  if (!expected.length || !spoken.length) return 0;
+
+  const aligned = alignWords(expected, spoken);
+  const similaritySum = aligned.reduce(
+    (sum, item) => sum + wordSimilarity(item.expected, item.spoken),
+    0,
+  );
+  const orderScore = similaritySum / Math.max(expected.length, 1);
+  const lengthPenalty = Math.min(1, spoken.length / Math.max(expected.length, 1));
+  const extraPenalty = Math.max(0, spoken.length - expected.length) / Math.max(expected.length, 1);
+
+  return Math.max(0, orderScore * 0.82 + lengthPenalty * 0.18 - extraPenalty * 0.16);
+}
+
 function levenshteinDistance(a, b) {
   const rows = a.length + 1;
   const cols = b.length + 1;
@@ -1113,17 +1130,29 @@ async function toggleRecording() {
     playRecordingBtn.disabled = false;
     drillStatus.textContent = "Analyzing voice timing...";
     latestSpeechWindow = await detectSpeechWindow(blob);
+    const browserTranscript = transcript;
+    const browserScore = scoreTranscriptCandidate(sourceText.value, browserTranscript);
     try {
       drillStatus.textContent = "Transcribing with Speech API...";
       const apiTranscription = await transcribeWithSpeechApi(blob);
       if (apiTranscription.text.trim()) {
-        transcript = apiTranscription.text;
-        transcriptConfidence = 0.86;
-        latestTranscriptionWords = apiTranscription.words;
+        const apiScore = scoreTranscriptCandidate(sourceText.value, apiTranscription.text);
+        const apiIsBetter = apiScore >= browserScore + 0.04 || !browserTranscript.trim();
+
+        if (apiIsBetter) {
+          transcript = apiTranscription.text;
+          transcriptConfidence = 0.86;
+          latestTranscriptionWords = apiTranscription.words;
+          drillStatus.textContent = apiTranscription.words.length
+            ? "Speech API transcript selected with word timestamps."
+            : "Speech API transcript selected.";
+        } else {
+          transcript = browserTranscript;
+          latestTranscriptionWords = [];
+          drillStatus.textContent = "Browser transcript was closer to the practice text.";
+        }
+
         transcriptText.textContent = transcript;
-        drillStatus.textContent = apiTranscription.words.length
-          ? "Speech API transcript ready with word timestamps."
-          : "Speech API transcript ready.";
       }
     } catch {
       drillStatus.textContent = "Speech API unavailable. Using browser recognition fallback.";
