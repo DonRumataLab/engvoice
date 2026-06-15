@@ -58,6 +58,7 @@ let transcript = "";
 let transcriptConfidence = 0;
 let latestRecordingDurationMs = 0;
 let latestSpeechWindow = null;
+let latestTranscriptionWords = [];
 let wordAnalysis = [];
 let speechQueue = [];
 let speechQueueIndex = 0;
@@ -602,14 +603,15 @@ function buildWordAnalysis(expectedText, spokenText, durationMs) {
       : 0;
     const accuracy = exact ? 100 : Math.round(similarity * 100);
     const fluency = item.spoken ? Math.round((paceScore + accuracy) / 2) : 0;
+    const apiWord = item.spokenIndex >= 0 ? latestTranscriptionWords[item.spokenIndex] : null;
     const startTime =
-      item.spokenIndex >= 0
+      apiWord?.start ?? (item.spokenIndex >= 0
         ? speechStart + Math.max(0, item.spokenIndex * wordSlotSeconds - wordSlotSeconds * 0.18)
-        : null;
+        : null);
     const endTime =
-      item.spokenIndex >= 0
+      apiWord?.end ?? (item.spokenIndex >= 0
         ? speechStart + Math.min(speechDuration, (item.spokenIndex + 1) * wordSlotSeconds + wordSlotSeconds * 0.24)
-        : null;
+        : null);
 
     return {
       id: index,
@@ -880,6 +882,43 @@ async function detectSpeechWindow(blob) {
   }
 }
 
+async function transcribeWithSpeechApi(blob) {
+  const formData = new FormData();
+  formData.append("file", blob, "recording.webm");
+  formData.append("model", "whisper-1");
+  formData.append("language", "en");
+  formData.append("response_format", "verbose_json");
+  formData.append("timestamp_granularities[]", "word");
+
+  const prompt = cleanSpeechText(sourceText.value).slice(0, 800);
+  if (prompt) {
+    formData.append("prompt", prompt);
+  }
+
+  const response = await fetch("./api/transcribe", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Speech API unavailable (${response.status})`);
+  }
+
+  const data = await response.json();
+  return {
+    text: data.text || "",
+    words: Array.isArray(data.words)
+      ? data.words
+          .map((word) => ({
+            word: normalizeText(word.word),
+            start: Number(word.start),
+            end: Number(word.end),
+          }))
+          .filter((word) => word.word && Number.isFinite(word.start) && Number.isFinite(word.end))
+      : [],
+  };
+}
+
 function speakModelWord(word, rate = 0.82) {
   return new Promise((resolve) => {
     if (!window.speechSynthesis) {
@@ -978,6 +1017,7 @@ function resetPronunciationAnalysis() {
   fluencyMetric.textContent = "--";
   wordAnalysis = [];
   latestSpeechWindow = null;
+  latestTranscriptionWords = [];
   wordAnalysisList.textContent = "";
   drillWordList.textContent = "";
   wordAnalysisSummary.textContent = "Record speech to see word scores.";
@@ -1073,6 +1113,21 @@ async function toggleRecording() {
     playRecordingBtn.disabled = false;
     drillStatus.textContent = "Analyzing voice timing...";
     latestSpeechWindow = await detectSpeechWindow(blob);
+    try {
+      drillStatus.textContent = "Transcribing with Speech API...";
+      const apiTranscription = await transcribeWithSpeechApi(blob);
+      if (apiTranscription.text.trim()) {
+        transcript = apiTranscription.text;
+        transcriptConfidence = 0.86;
+        latestTranscriptionWords = apiTranscription.words;
+        transcriptText.textContent = transcript;
+        drillStatus.textContent = apiTranscription.words.length
+          ? "Speech API transcript ready with word timestamps."
+          : "Speech API transcript ready.";
+      }
+    } catch {
+      drillStatus.textContent = "Speech API unavailable. Using browser recognition fallback.";
+    }
     stream.getTracks().forEach((track) => track.stop());
     renderFeedback(durationMs);
   };

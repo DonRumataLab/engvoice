@@ -30,6 +30,24 @@ http://127.0.0.1:5173
 
 Use Chrome or Edge for the best speech recognition support.
 
+## Speech API mode
+
+The browser recognizer is still available as a fallback. For better recognition and word timestamps,
+deploy the app with the `/api/transcribe` serverless endpoint and set:
+
+```text
+OPENAI_API_KEY=your_api_key
+```
+
+The endpoint forwards recordings to OpenAI audio transcriptions with:
+
+- model: `whisper-1`
+- response format: `verbose_json`
+- timestamp granularity: `word`
+
+GitHub Pages can host the static UI, but it cannot keep an API key secret or run `/api/transcribe`.
+Use Vercel or another backend-capable host for Speech API mode.
+
 ## Deploy to GitHub Pages
 
 1. Create a GitHub repository, for example `eng-coach`.
