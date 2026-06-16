@@ -50,6 +50,48 @@ The endpoint forwards recordings to OpenAI audio transcriptions with:
 GitHub Pages can host the static UI, but it cannot keep an API key secret or run `/api/transcribe`.
 Use Vercel or another backend-capable host for Speech API mode.
 
+## Separate aligner backend
+
+Vercel should not run Montreal Forced Aligner directly. Keep Vercel as the public app and deploy the
+heavy alignment service separately:
+
+```bash
+npm run aligner
+```
+
+By default the aligner listens on:
+
+```text
+http://0.0.0.0:5174
+```
+
+It exposes:
+
+- `GET /health`
+- `POST /api/phoneme-align`
+
+Set these variables on the aligner host:
+
+```text
+PORT=5174
+CORS_ORIGIN=https://engvoice-alpha.vercel.app
+ALIGNER_API_TOKEN=change-this-token
+MFA_BIN=mfa
+FFMPEG_BIN=ffmpeg
+MFA_DICTIONARY=english_us_arpa
+MFA_ACOUSTIC_MODEL=english_us_arpa
+```
+
+Then set these variables in Vercel:
+
+```text
+ALIGNER_API_URL=https://your-aligner-host.example.com
+ALIGNER_API_TOKEN=change-this-token
+```
+
+The browser still calls `/api/phoneme-align` on Vercel. Vercel forwards the recording to the separate
+aligner backend, so the public UI does not need to know the private backend token.
+
 ## Deploy to UltraVDS or another VPS
 
 Install Node.js 20+ on the server, clone the repository, and create `.env`:
@@ -57,6 +99,8 @@ Install Node.js 20+ on the server, clone the repository, and create `.env`:
 ```text
 OPENAI_API_KEY=your_api_key
 PORT=5173
+ALIGNER_API_URL=https://your-aligner-host.example.com
+ALIGNER_API_TOKEN=change-this-token
 MFA_BIN=mfa
 FFMPEG_BIN=ffmpeg
 MFA_DICTIONARY=english_us_arpa
@@ -84,6 +128,8 @@ Recommended flow:
 ## Optional free phoneme alignment
 
 The `/api/phoneme-align` endpoint is designed for a self-hosted Montreal Forced Aligner setup.
+On Vercel it acts as a proxy to the separate aligner backend. In `server.mjs` it can still run
+locally as an all-in-one development server.
 Install these on the VPS:
 
 - `ffmpeg`

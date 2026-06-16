@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
+    "aligner": "node aligner-server.mjs",
     "vercel:dev": "vercel dev",
-    "check": "node --check src/app.js && node --check api/transcribe.js && node --check server.mjs"
+    "check": "node --check src/app.js && node --check api/transcribe.js && node --check api/phoneme-align.js && node --check server.mjs && node --check aligner-server.mjs"
   }
 }
