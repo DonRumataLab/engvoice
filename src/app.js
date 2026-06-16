@@ -48,6 +48,8 @@ const volumeMetric = document.querySelector("#volumeMetric");
 const stabilityMetric = document.querySelector("#stabilityMetric");
 const clippingMetric = document.querySelector("#clippingMetric");
 const audioAnalysisTips = document.querySelector("#audioAnalysisTips");
+const phonemeAnalysisSummary = document.querySelector("#phonemeAnalysisSummary");
+const phonemeAnalysisList = document.querySelector("#phonemeAnalysisList");
 const startDrillBtn = document.querySelector("#startDrillBtn");
 const drillStatus = document.querySelector("#drillStatus");
 const drillWordList = document.querySelector("#drillWordList");
@@ -68,6 +70,7 @@ let latestRecordingDurationMs = 0;
 let latestSpeechWindow = null;
 let latestTranscriptionWords = [];
 let latestAudioAnalysis = null;
+let latestPhonemeAlignment = null;
 let wordAnalysis = [];
 let speechQueue = [];
 let speechQueueIndex = 0;
@@ -1094,6 +1097,84 @@ async function transcribeWithSpeechApi(blob) {
   };
 }
 
+async function alignPhonemesWithMfa(blob) {
+  const formData = new FormData();
+  formData.append("file", blob, "recording.webm");
+  formData.append("referenceText", cleanSpeechText(sourceText.value));
+
+  const response = await fetch("./api/phoneme-align", {
+    method: "POST",
+    body: formData,
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.detail || data.error || `MFA unavailable (${response.status})`);
+  }
+
+  return data;
+}
+
+function renderPhonemeAlignment(alignment) {
+  latestPhonemeAlignment = alignment;
+  phonemeAnalysisList.textContent = "";
+
+  if (!alignment?.words?.length) {
+    phonemeAnalysisSummary.textContent = "Phoneme alignment is not available yet.";
+    return;
+  }
+
+  phonemeAnalysisSummary.textContent = `${alignment.words.length} words aligned by MFA.`;
+
+  alignment.words.forEach((word) => {
+    const card = document.createElement("article");
+    card.className = "phoneme-card";
+
+    const header = document.createElement("div");
+    const label = document.createElement("strong");
+    label.textContent = word.label;
+    const time = document.createElement("small");
+    time.textContent = `${word.start.toFixed(2)}-${word.end.toFixed(2)}s`;
+    header.append(label, time);
+
+    const phones = document.createElement("div");
+    phones.className = "phoneme-chip-list";
+    word.phonemes.forEach((phone) => {
+      const chip = document.createElement("span");
+      chip.textContent = `${phone.label} ${(phone.end - phone.start).toFixed(2)}s`;
+      phones.append(chip);
+    });
+
+    if (!word.phonemes.length) {
+      const chip = document.createElement("span");
+      chip.textContent = "no phoneme alignment";
+      phones.append(chip);
+    }
+
+    card.append(header, phones);
+    phonemeAnalysisList.append(card);
+  });
+}
+
+async function runPhonemeAlignment(blob) {
+  phonemeAnalysisSummary.textContent = "Running self-hosted MFA phoneme alignment...";
+  phonemeAnalysisList.textContent = "";
+
+  try {
+    renderPhonemeAlignment(await alignPhonemesWithMfa(blob));
+  } catch (error) {
+    latestPhonemeAlignment = null;
+    phonemeAnalysisSummary.textContent = "MFA phoneme alignment is not configured on this host.";
+    const item = document.createElement("article");
+    item.className = "phoneme-card";
+    item.textContent =
+      error instanceof Error
+        ? error.message
+        : "Install Montreal Forced Aligner on the server to enable phoneme analysis.";
+    phonemeAnalysisList.append(item);
+  }
+}
+
 function speakModelWord(word, rate = 0.82) {
   return new Promise((resolve) => {
     if (!window.speechSynthesis) {
@@ -1194,6 +1275,7 @@ function resetPronunciationAnalysis() {
   latestSpeechWindow = null;
   latestTranscriptionWords = [];
   latestAudioAnalysis = null;
+  latestPhonemeAlignment = null;
   voiceTimeMetric.textContent = "--";
   silenceMetric.textContent = "--";
   pauseMetric.textContent = "--";
@@ -1202,6 +1284,8 @@ function resetPronunciationAnalysis() {
   clippingMetric.textContent = "--";
   audioAnalysisSummary.textContent = "Recording new audio sample...";
   audioAnalysisTips.textContent = "";
+  phonemeAnalysisSummary.textContent = "Waiting for recording...";
+  phonemeAnalysisList.textContent = "";
   wordAnalysisList.textContent = "";
   drillWordList.textContent = "";
   wordAnalysisSummary.textContent = "Record speech to see word scores.";
@@ -1328,6 +1412,7 @@ async function toggleRecording() {
     }
     stream.getTracks().forEach((track) => track.stop());
     renderFeedback(durationMs);
+    runPhonemeAlignment(blob);
   };
 
   mediaRecorder.start();

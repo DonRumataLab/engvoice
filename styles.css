@@ -270,6 +270,7 @@ button:focus-visible,
 .current-reading-panel,
 .word-analysis-panel,
 .audio-analysis-panel,
+.phoneme-panel,
 .drill-panel,
 .speech-metrics-grid article,
 .audio-metrics-grid article {
@@ -351,6 +352,7 @@ input[type="range"] {
 .current-reading-panel,
 .word-analysis-panel,
 .audio-analysis-panel,
+.phoneme-panel,
 .drill-panel {
   padding: 16px;
 }
@@ -418,6 +420,7 @@ input[type="range"] {
 
 .word-analysis-panel,
 .audio-analysis-panel,
+.phoneme-panel,
 .drill-panel {
   margin-top: 18px;
 }
@@ -535,6 +538,44 @@ input[type="range"] {
   padding-left: 20px;
   color: var(--muted);
   line-height: 1.45;
+}
+
+.phoneme-analysis-list {
+  display: grid;
+  gap: 10px;
+}
+
+.phoneme-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.phoneme-card strong,
+.phoneme-card small {
+  display: block;
+}
+
+.phoneme-card small {
+  color: var(--muted);
+}
+
+.phoneme-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.phoneme-chip-list span {
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  padding: 5px 8px;
+  font-size: 0.82rem;
+  font-weight: 750;
 }
 
 .drill-card-main {

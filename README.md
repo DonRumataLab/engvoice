@@ -14,6 +14,7 @@ Eng Coach is an MVP web service for English practice.
 - Record speech from the microphone.
 - Get first-pass feedback on text match, pace, pronunciation, accuracy, and fluency.
 - Use a free local Web Audio analyzer for voice time, silence, pauses, volume stability, and clipping.
+- Optional self-hosted phoneme alignment through Montreal Forced Aligner.
 - Review word-by-word scores after a microphone recording.
 - Run Word drill 2.0: user segment, slow model, normal model, retry recording, and per-word retry score.
 
@@ -56,6 +57,10 @@ Install Node.js 20+ on the server, clone the repository, and create `.env`:
 ```text
 OPENAI_API_KEY=your_api_key
 PORT=5173
+MFA_BIN=mfa
+FFMPEG_BIN=ffmpeg
+MFA_DICTIONARY=english_us_arpa
+MFA_ACOUSTIC_MODEL=english_us_arpa
 ```
 
 Start the app:
@@ -75,6 +80,20 @@ Recommended flow:
 3. Put Nginx in front of it.
 4. Add a TLS certificate with Certbot.
 5. Keep the app alive with `pm2` or a systemd service.
+
+## Optional free phoneme alignment
+
+The `/api/phoneme-align` endpoint is designed for a self-hosted Montreal Forced Aligner setup.
+Install these on the VPS:
+
+- `ffmpeg`
+- Montreal Forced Aligner CLI (`mfa`)
+- English acoustic model
+- English pronunciation dictionary
+
+The endpoint converts browser `webm` recordings to `wav`, runs `mfa align`, parses the generated
+TextGrid, and returns word/phoneme timings to the UI. If MFA is not installed, the app keeps working
+and shows that phoneme alignment is not configured.
 
 ## Deploy to GitHub Pages
 
