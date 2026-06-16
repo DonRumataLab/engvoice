@@ -609,9 +609,35 @@ function scorePace(pace) {
   return Math.max(25, 100 - Math.abs(130 - pace));
 }
 
+function getTimedTranscriptText() {
+  return latestTranscriptionWords.map((item) => item.word).join(" ");
+}
+
+function getApiWordTiming(wordIndex, durationSeconds) {
+  const apiWord = latestTranscriptionWords[wordIndex];
+  if (!apiWord) return null;
+
+  const previous = latestTranscriptionWords[wordIndex - 1];
+  const next = latestTranscriptionWords[wordIndex + 1];
+  const rawStart = Math.max(0, apiWord.start);
+  const rawEnd = Math.max(rawStart + 0.08, apiWord.end);
+  const startLimit = previous ? (previous.end + rawStart) / 2 : Math.max(0, rawStart - 0.1);
+  const endLimit = next ? (rawEnd + next.start) / 2 : Math.min(durationSeconds, rawEnd + 0.14);
+  const center = (rawStart + rawEnd) / 2;
+  const minDuration = Math.min(0.42, Math.max(0.18, rawEnd - rawStart));
+  const start = Math.max(0, Math.min(startLimit, center - minDuration / 2));
+  const end = Math.min(durationSeconds, Math.max(endLimit, center + minDuration / 2));
+
+  return {
+    start,
+    end: Math.max(start + 0.18, end),
+  };
+}
+
 function buildWordAnalysis(expectedText, spokenText, durationMs) {
   const expected = tokenize(expectedText);
-  const spoken = tokenize(spokenText);
+  const timedText = getTimedTranscriptText();
+  const spoken = latestTranscriptionWords.length ? tokenize(timedText) : tokenize(spokenText);
   const aligned = alignWords(expected, spoken);
   const durationMinutes = Math.max(durationMs / 60000, 1 / 60);
   const pace = Math.round(spoken.length / durationMinutes);
@@ -632,15 +658,18 @@ function buildWordAnalysis(expectedText, spokenText, durationMs) {
       : 0;
     const accuracy = exact ? 100 : Math.round(similarity * 100);
     const fluency = item.spoken ? Math.round((paceScore + accuracy) / 2) : 0;
-    const apiWord = item.spokenIndex >= 0 ? latestTranscriptionWords[item.spokenIndex] : null;
-    const startTime =
-      apiWord?.start ?? (item.spokenIndex >= 0
+    const apiTiming = item.spokenIndex >= 0 ? getApiWordTiming(item.spokenIndex, durationSeconds) : null;
+    const fallbackStart =
+      item.spokenIndex >= 0
         ? speechStart + Math.max(0, item.spokenIndex * wordSlotSeconds - wordSlotSeconds * 0.18)
-        : null);
-    const endTime =
-      apiWord?.end ?? (item.spokenIndex >= 0
-        ? speechStart + Math.min(speechDuration, (item.spokenIndex + 1) * wordSlotSeconds + wordSlotSeconds * 0.24)
-        : null);
+        : null;
+    const fallbackEnd =
+      item.spokenIndex >= 0
+        ? speechStart +
+          Math.min(speechDuration, (item.spokenIndex + 1) * wordSlotSeconds + wordSlotSeconds * 0.24)
+        : null;
+    const startTime = apiTiming?.start ?? fallbackStart;
+    const endTime = apiTiming?.end ?? fallbackEnd;
 
     return {
       id: index,
@@ -653,6 +682,7 @@ function buildWordAnalysis(expectedText, spokenText, durationMs) {
       pronunciation: Math.max(0, Math.min(100, pronunciation)),
       accuracy: Math.max(0, Math.min(100, accuracy)),
       fluency: Math.max(0, Math.min(100, fluency)),
+      timingSource: apiTiming ? "Speech API timing" : item.spokenIndex >= 0 ? "estimated timing" : "no timing",
       needsDrill: !item.spoken || pronunciation < 82 || accuracy < 80,
     };
   });
@@ -809,11 +839,14 @@ function createDrillCard(row) {
   const heard = document.createElement("small");
   heard.textContent = `heard: ${row.spoken}`;
 
+  const timing = document.createElement("small");
+  timing.textContent = row.timingSource;
+
   const status = document.createElement("span");
   status.className = `drill-status-badge ${row.needsDrill ? "needs-drill" : "is-clear"}`;
   status.textContent = row.needsDrill ? "needs practice" : "checked";
 
-  main.append(word, status, phonetic, heard);
+  main.append(word, status, phonetic, heard, timing);
 
   const score = document.createElement("span");
   score.className = `drill-score ${metricClass(row.pronunciation)}`;
@@ -1400,18 +1433,19 @@ async function toggleRecording() {
       if (apiTranscription.text.trim()) {
         const apiScore = scoreTranscriptCandidate(sourceText.value, apiTranscription.text);
         const apiIsBetter = apiScore >= browserScore + 0.04 || !browserTranscript.trim();
+        latestTranscriptionWords = apiTranscription.words;
 
         if (apiIsBetter) {
           transcript = apiTranscription.text;
           transcriptConfidence = 0.86;
-          latestTranscriptionWords = apiTranscription.words;
           drillStatus.textContent = apiTranscription.words.length
             ? "Speech API transcript selected with word timestamps."
             : "Speech API transcript selected.";
         } else {
           transcript = browserTranscript;
-          latestTranscriptionWords = [];
-          drillStatus.textContent = "Browser transcript was closer to the practice text.";
+          drillStatus.textContent = apiTranscription.words.length
+            ? "Browser transcript was closer. Using Speech API word timings for drill playback."
+            : "Browser transcript was closer to the practice text.";
         }
 
         transcriptText.textContent = transcript;
