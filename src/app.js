@@ -744,13 +744,17 @@ function renderWordAnalysis(analysis) {
   drillWordList.textContent = "";
 
   const drillRows = wordAnalysis.filter((row) => row.needsDrill);
+  const visibleDrillRows = [...wordAnalysis].sort((a, b) => {
+    if (a.needsDrill === b.needsDrill) return a.id - b.id;
+    return a.needsDrill ? -1 : 1;
+  });
   wordAnalysisSummary.textContent = wordAnalysis.length
     ? `${wordAnalysis.length} words checked, ${drillRows.length} need attention.`
     : "Record speech to see word scores.";
-  startDrillBtn.disabled = drillRows.length === 0;
-  drillStatus.textContent = drillRows.length
-    ? "Use each drill card to hear the estimated user segment, compare slow/normal model audio, and record the word again."
-    : "No correction drill needed for this recording.";
+  startDrillBtn.disabled = wordAnalysis.length === 0;
+  drillStatus.textContent = wordAnalysis.length
+    ? `${wordAnalysis.length} drill cards ready. Words that need attention are shown first, but every word can be replayed, compared, and recorded again.`
+    : "Record speech to build a correction drill.";
 
   wordAnalysis.forEach((row) => {
     const card = document.createElement("article");
@@ -782,14 +786,14 @@ function renderWordAnalysis(analysis) {
     wordAnalysisList.append(card);
   });
 
-  drillRows.forEach((row) => {
+  visibleDrillRows.forEach((row) => {
     drillWordList.append(createDrillCard(row));
   });
 }
 
 function createDrillCard(row) {
   const card = document.createElement("article");
-  card.className = "drill-card";
+  card.className = `drill-card ${row.needsDrill ? "needs-drill" : "is-clear"}`;
   card.dataset.wordId = row.id;
 
   const main = document.createElement("div");
@@ -805,7 +809,11 @@ function createDrillCard(row) {
   const heard = document.createElement("small");
   heard.textContent = `heard: ${row.spoken}`;
 
-  main.append(word, phonetic, heard);
+  const status = document.createElement("span");
+  status.className = `drill-status-badge ${row.needsDrill ? "needs-drill" : "is-clear"}`;
+  status.textContent = row.needsDrill ? "needs practice" : "checked";
+
+  main.append(word, status, phonetic, heard);
 
   const score = document.createElement("span");
   score.className = `drill-score ${metricClass(row.pronunciation)}`;
@@ -1294,7 +1302,8 @@ function resetPronunciationAnalysis() {
 }
 
 async function runDrillQueue() {
-  const drillRows = wordAnalysis.filter((row) => row.needsDrill).slice(0, 8);
+  const problemRows = wordAnalysis.filter((row) => row.needsDrill);
+  const drillRows = (problemRows.length ? problemRows : wordAnalysis).slice(0, 12);
   if (!drillRows.length) return;
 
   startDrillBtn.disabled = true;

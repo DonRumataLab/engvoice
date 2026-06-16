@@ -498,6 +498,9 @@ input[type="range"] {
   display: grid;
   gap: 10px;
   margin-top: 12px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .drill-card {
@@ -509,6 +512,16 @@ input[type="range"] {
   border: 1px solid rgba(182, 75, 53, 0.28);
   border-radius: 8px;
   background: #fffaf8;
+}
+
+.drill-card.is-clear {
+  border-color: var(--line);
+  background: #fbfdfc;
+}
+
+.drill-card.needs-drill {
+  border-color: rgba(182, 75, 53, 0.38);
+  background: #fff7f3;
 }
 
 .audio-metrics-grid {
@@ -585,6 +598,22 @@ input[type="range"] {
 
 .drill-card-main strong {
   font-size: 1.05rem;
+}
+
+.drill-status-badge {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.drill-status-badge.needs-drill {
+  color: var(--warn);
+  background: #fde4dc;
 }
 
 .phonetic-hint,
