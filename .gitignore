@@ -1,6 +1,7 @@
 test-artifacts/
 node_modules/
 .vercel/
+.deploy/
 .env
 .DS_Store
 Thumbs.db
