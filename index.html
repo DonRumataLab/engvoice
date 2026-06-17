@@ -34,6 +34,21 @@
                 <h2>Practice against a model phrase</h2>
               </div>
 
+              <div class="metrics-grid compact-metrics" aria-label="Text metrics">
+                <div>
+                  <span id="wordCount">0</span>
+                  <small>words</small>
+                </div>
+                <div>
+                  <span id="readTime">0:00</span>
+                  <small>reading</small>
+                </div>
+                <div>
+                  <span id="targetPace">120</span>
+                  <small>wpm</small>
+                </div>
+              </div>
+
               <div class="toolbar" aria-label="Text to speech controls">
                 <button id="speakBtn" class="primary-btn" type="button">Play text</button>
                 <button id="pauseBtn" type="button">Pause</button>
@@ -70,21 +85,6 @@
                   accept=".txt,.md,.markdown,.html,.htm,.json,.csv,.srt,.vtt,.pdf,text/*,application/pdf"
                 />
                 <span id="fileName" class="muted">TXT, MD, HTML, JSON, CSV, SRT, VTT, PDF</span>
-              </div>
-
-              <div class="metrics-grid" aria-label="Text metrics">
-                <div>
-                  <span id="wordCount">0</span>
-                  <small>words</small>
-                </div>
-                <div>
-                  <span id="readTime">0:00</span>
-                  <small>reading</small>
-                </div>
-                <div>
-                  <span id="targetPace">120</span>
-                  <small>wpm</small>
-                </div>
               </div>
             </aside>
 

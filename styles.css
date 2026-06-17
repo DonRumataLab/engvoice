@@ -291,6 +291,24 @@ button:focus-visible,
   padding: 13px;
 }
 
+.compact-metrics {
+  max-width: 520px;
+  margin: -6px 0 16px;
+}
+
+.metrics-grid.compact-metrics div {
+  padding: 8px 10px;
+}
+
+.metrics-grid.compact-metrics span {
+  font-size: 1rem;
+  line-height: 1.05;
+}
+
+.metrics-grid.compact-metrics small {
+  font-size: 0.72rem;
+}
+
 .metrics-grid span {
   display: block;
   font-size: 1.45rem;
