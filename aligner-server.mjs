@@ -221,6 +221,8 @@ async function handleAlignment(request, response) {
       "1",
       "-ar",
       "16000",
+      "-af",
+      "highpass=f=80,lowpass=f=7600,dynaudnorm=f=150:g=15",
       wavPath,
     ]);
     await writeFile(join(corpusDir, "recording.lab"), referenceText);

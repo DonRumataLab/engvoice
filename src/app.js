@@ -640,6 +640,23 @@ function getApiWordTiming(wordIndex, durationSeconds) {
   };
 }
 
+function getExpectedWordTiming(wordIndex, wordCount, durationSeconds) {
+  if (!wordCount) return null;
+
+  const speechStart = latestSpeechWindow?.start ?? 0;
+  const speechEnd = latestSpeechWindow?.end ?? durationSeconds;
+  const speechDuration = Math.max(0.4, speechEnd - speechStart);
+  const slotSeconds = speechDuration / wordCount;
+  const start = speechStart + Math.max(0, wordIndex * slotSeconds - slotSeconds * 0.16);
+  const end =
+    speechStart + Math.min(speechDuration, (wordIndex + 1) * slotSeconds + slotSeconds * 0.2);
+
+  return {
+    start,
+    end: Math.max(start + 0.18, end),
+  };
+}
+
 function getAlignmentWordTiming(alignmentWord, wordIndex, alignmentWords) {
   if (!alignmentWord) return null;
 
@@ -748,12 +765,8 @@ function buildWordAnalysis(expectedText, spokenText, durationMs) {
   const pace = Math.round(spoken.length / durationMinutes);
   const paceScore = scorePace(pace);
   const recognitionConfidence = transcriptConfidence || 0.68;
-  const spokenCount = Math.max(spoken.length, 1);
+  const expectedCount = Math.max(expected.length, 1);
   const durationSeconds = durationMs / 1000;
-  const speechStart = latestSpeechWindow?.start ?? 0;
-  const speechEnd = latestSpeechWindow?.end ?? durationSeconds;
-  const speechDuration = Math.max(0.4, speechEnd - speechStart);
-  const wordSlotSeconds = speechDuration / spokenCount;
 
   const rows = aligned.map((item, index) => {
     const similarity = wordSimilarity(item.expected, item.spoken);
@@ -763,18 +776,13 @@ function buildWordAnalysis(expectedText, spokenText, durationMs) {
       : 0;
     const accuracy = exact ? 100 : Math.round(similarity * 100);
     const fluency = item.spoken ? Math.round((paceScore + accuracy) / 2) : 0;
-    const apiTiming = item.spokenIndex >= 0 ? getApiWordTiming(item.spokenIndex, durationSeconds) : null;
-    const fallbackStart =
-      item.spokenIndex >= 0
-        ? speechStart + Math.max(0, item.spokenIndex * wordSlotSeconds - wordSlotSeconds * 0.18)
+    const apiTiming =
+      item.spokenIndex >= 0 && similarity >= 0.86 && Math.abs(item.spokenIndex - index) <= 1
+        ? getApiWordTiming(item.spokenIndex, durationSeconds)
         : null;
-    const fallbackEnd =
-      item.spokenIndex >= 0
-        ? speechStart +
-          Math.min(speechDuration, (item.spokenIndex + 1) * wordSlotSeconds + wordSlotSeconds * 0.24)
-        : null;
-    const startTime = apiTiming?.start ?? fallbackStart;
-    const endTime = apiTiming?.end ?? fallbackEnd;
+    const expectedTiming = getExpectedWordTiming(index, expectedCount, durationSeconds);
+    const startTime = apiTiming?.start ?? expectedTiming?.start ?? null;
+    const endTime = apiTiming?.end ?? expectedTiming?.end ?? null;
 
     return {
       id: index,
@@ -787,7 +795,7 @@ function buildWordAnalysis(expectedText, spokenText, durationMs) {
       pronunciation: Math.max(0, Math.min(100, pronunciation)),
       accuracy: Math.max(0, Math.min(100, accuracy)),
       fluency: Math.max(0, Math.min(100, fluency)),
-      timingSource: apiTiming ? "Speech API timing" : item.spokenIndex >= 0 ? "estimated timing" : "no timing",
+      timingSource: apiTiming ? "trusted ASR timing" : "reference phrase timing",
       needsDrill: !item.spoken || pronunciation < 82 || accuracy < 80,
     };
   });
