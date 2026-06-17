@@ -634,6 +634,61 @@ function getApiWordTiming(wordIndex, durationSeconds) {
   };
 }
 
+function getAlignmentWordTiming(alignmentWord, wordIndex, alignmentWords) {
+  if (!alignmentWord) return null;
+
+  const previous = alignmentWords[wordIndex - 1];
+  const next = alignmentWords[wordIndex + 1];
+  const rawStart = Math.max(0, Number(alignmentWord.start));
+  const rawEnd = Math.max(rawStart + 0.08, Number(alignmentWord.end));
+  const startLimit = previous ? (Number(previous.end) + rawStart) / 2 : Math.max(0, rawStart - 0.08);
+  const endLimit = next ? (rawEnd + Number(next.start)) / 2 : rawEnd + 0.12;
+  const start = Math.max(0, Math.min(startLimit, rawStart));
+  const end = Math.max(start + 0.16, Math.max(rawEnd, endLimit));
+
+  return { start, end };
+}
+
+function applyPhonemeAlignmentToWordAnalysis(alignment) {
+  const alignmentWords = Array.isArray(alignment?.words)
+    ? alignment.words
+        .map((word) => ({
+          ...word,
+          normalized: normalizeText(word.label || ""),
+        }))
+        .filter((word) => word.normalized && Number.isFinite(word.start) && Number.isFinite(word.end))
+    : [];
+
+  if (!alignmentWords.length || !wordAnalysis.length) return 0;
+
+  const expected = wordAnalysis.map((row) => normalizeText(row.expected));
+  const aligned = alignWords(
+    expected,
+    alignmentWords.map((word) => word.normalized),
+  );
+  let updated = 0;
+
+  aligned.forEach((item, index) => {
+    if (item.spokenIndex < 0 || !wordAnalysis[index]) return;
+
+    const alignmentWord = alignmentWords[item.spokenIndex];
+    const timing = getAlignmentWordTiming(alignmentWord, item.spokenIndex, alignmentWords);
+    if (!timing) return;
+
+    wordAnalysis[index] = {
+      ...wordAnalysis[index],
+      startTime: timing.start,
+      endTime: timing.end,
+      timingSource: "MFA alignment",
+      phonemes: alignmentWord.phonemes || [],
+    };
+    updated += 1;
+  });
+
+  renderWordAnalysis({ rows: wordAnalysis });
+  return updated;
+}
+
 function buildWordAnalysis(expectedText, spokenText, durationMs) {
   const expected = tokenize(expectedText);
   const timedText = getTimedTranscriptText();
@@ -1165,7 +1220,10 @@ function renderPhonemeAlignment(alignment) {
     return;
   }
 
-  phonemeAnalysisSummary.textContent = `${alignment.words.length} words aligned by MFA.`;
+  const updatedDrillWords = applyPhonemeAlignmentToWordAnalysis(alignment);
+  phonemeAnalysisSummary.textContent = updatedDrillWords
+    ? `${alignment.words.length} words aligned by MFA. ${updatedDrillWords} drill timings updated.`
+    : `${alignment.words.length} words aligned by MFA. Drill timings were not updated.`;
 
   alignment.words.forEach((word) => {
     const card = document.createElement("article");
