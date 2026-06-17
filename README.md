@@ -80,6 +80,7 @@ MFA_BIN=mfa
 FFMPEG_BIN=ffmpeg
 MFA_DICTIONARY=english_us_arpa
 MFA_ACOUSTIC_MODEL=english_us_arpa
+MFA_NUM_JOBS=1
 ```
 
 Then set these variables in Vercel:
@@ -105,6 +106,7 @@ MFA_BIN=mfa
 FFMPEG_BIN=ffmpeg
 MFA_DICTIONARY=english_us_arpa
 MFA_ACOUSTIC_MODEL=english_us_arpa
+MFA_NUM_JOBS=1
 ```
 
 Start the app:

@@ -191,6 +191,7 @@ async function handleAlignment(request, response) {
   const ffmpegBin = process.env.FFMPEG_BIN || "ffmpeg";
   const dictionary = process.env.MFA_DICTIONARY || "english_us_arpa";
   const acousticModel = process.env.MFA_ACOUSTIC_MODEL || "english_us_arpa";
+  const mfaNumJobs = process.env.MFA_NUM_JOBS || "1";
   let workDir = null;
 
   try {
@@ -233,6 +234,8 @@ async function handleAlignment(request, response) {
       "--clean",
       "--overwrite",
       "--single_speaker",
+      "--num_jobs",
+      mfaNumJobs,
     ]);
 
     const textGridPath = await findFileByExtension(outputDir, ".textgrid");
