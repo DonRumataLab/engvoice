@@ -203,6 +203,72 @@ async function handleTranscription(request, response) {
   }
 }
 
+async function handleLocalTranscription(request, response) {
+  if (request.method !== "POST") {
+    response.writeHead(405, { Allow: "POST" });
+    response.end("Method not allowed");
+    return;
+  }
+
+  const ffmpegBin = process.env.FFMPEG_BIN || "ffmpeg";
+  const pythonBin = process.env.VOSK_PYTHON_BIN || "python3";
+  const modelDir = process.env.VOSK_MODEL_DIR || join(rootDir, "models", "vosk-model-small-en-us-0.15");
+  let workDir = null;
+
+  try {
+    if (!existsSync(modelDir)) {
+      sendJson(response, 501, {
+        error: "VOSK_MODEL_DIR is not configured.",
+        detail: `Model directory not found: ${modelDir}`,
+      });
+      return;
+    }
+
+    const body = await readRequestBody(request);
+    const form = parseMultipart(body, request.headers["content-type"] || "");
+    const file = form.file;
+
+    if (!file?.buffer) {
+      sendJson(response, 400, { error: "Audio file is required." });
+      return;
+    }
+
+    workDir = await mkdtemp(join(tmpdir(), "engvoice-vosk-"));
+    const inputPath = join(workDir, "recording.webm");
+    const wavPath = join(workDir, "recording.wav");
+    await writeFile(inputPath, file.buffer);
+    await runCommand(ffmpegBin, [
+      "-y",
+      "-i",
+      inputPath,
+      "-ac",
+      "1",
+      "-ar",
+      "16000",
+      "-sample_fmt",
+      "s16",
+      wavPath,
+    ]);
+
+    const { stdout } = await runCommand(pythonBin, [
+      join(rootDir, "scripts", "vosk_transcribe.py"),
+      modelDir,
+      wavPath,
+    ]);
+    const result = JSON.parse(stdout);
+    sendJson(response, 200, result);
+  } catch (error) {
+    sendJson(response, 501, {
+      error: "Local Vosk transcription is not available.",
+      detail: error instanceof Error ? error.message : "Unknown Vosk error.",
+    });
+  } finally {
+    if (workDir) {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+}
+
 async function handlePhonemeAlignment(request, response) {
   if (request.method !== "POST") {
     response.writeHead(405, { Allow: "POST" });
@@ -313,6 +379,11 @@ async function handleStatic(request, response) {
 const server = createServer(async (request, response) => {
   if (request.url?.startsWith("/api/transcribe")) {
     await handleTranscription(request, response);
+    return;
+  }
+
+  if (request.url?.startsWith("/api/local-transcribe")) {
+    await handleLocalTranscription(request, response);
     return;
   }
 

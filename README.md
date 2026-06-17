@@ -15,6 +15,7 @@ Eng Coach is an MVP web service for English practice.
 - Get first-pass feedback on text match, pace, pronunciation, accuracy, and fluency.
 - Use a free local Web Audio analyzer for voice time, silence, pauses, volume stability, and clipping.
 - Optional self-hosted phoneme alignment through Montreal Forced Aligner.
+- Optional self-hosted local ASR through Vosk for word timestamps without OpenAI.
 - Review word-by-word scores after a microphone recording.
 - Run Word drill 2.0: user segment, slow model, normal model, retry recording, and per-word retry score.
 
@@ -142,6 +143,26 @@ Install these on the VPS:
 The endpoint converts browser `webm` recordings to `wav`, runs `mfa align`, parses the generated
 TextGrid, and returns word/phoneme timings to the UI. If MFA is not installed, the app keeps working
 and shows that phoneme alignment is not configured.
+
+## Optional local ASR
+
+The `/api/local-transcribe` endpoint uses Vosk to transcribe microphone recordings locally and return
+word timestamps. This is the preferred open-source path for word-level drill cards.
+
+Set:
+
+```text
+VOSK_PYTHON_BIN=python3
+VOSK_MODEL_DIR=/home/user/vosk-model-small-en-us-0.15
+```
+
+Install the Python package and download a model on the VPS:
+
+```bash
+python3 -m pip install vosk
+wget https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+unzip vosk-model-small-en-us-0.15.zip -d /home/user
+```
 
 ## Deploy to GitHub Pages
 

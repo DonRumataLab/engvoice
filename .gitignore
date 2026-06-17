@@ -2,6 +2,8 @@ test-artifacts/
 node_modules/
 .vercel/
 .deploy/
+__pycache__/
+*.pyc
 .env
 .DS_Store
 Thumbs.db

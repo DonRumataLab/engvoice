@@ -1302,6 +1302,36 @@ async function transcribeWithSpeechApi(blob) {
   };
 }
 
+async function transcribeWithLocalAsr(blob) {
+  const formData = new FormData();
+  formData.append("file", blob, "recording.webm");
+
+  const response = await fetch("./api/local-transcribe", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || data.error || `Local ASR unavailable (${response.status})`);
+  }
+
+  const data = await response.json();
+  return {
+    text: data.text || "",
+    words: Array.isArray(data.words)
+      ? data.words
+          .map((word) => ({
+            word: normalizeText(word.word),
+            start: Number(word.start),
+            end: Number(word.end),
+            confidence: Number(word.confidence),
+          }))
+          .filter((word) => word.word && Number.isFinite(word.start) && Number.isFinite(word.end))
+      : [],
+  };
+}
+
 async function alignPhonemesWithMfa(blob) {
   const formData = new FormData();
   formData.append("file", blob, "recording.webm");
@@ -1600,7 +1630,20 @@ async function toggleRecording() {
     const browserTranscript = transcript;
     const browserScore = scoreTranscriptCandidate(sourceText.value, browserTranscript);
     try {
-      drillStatus.textContent = "Transcribing with Speech API...";
+      drillStatus.textContent = "Transcribing locally with Vosk...";
+      const localTranscription = await transcribeWithLocalAsr(blob);
+      if (localTranscription.text.trim()) {
+        transcript = localTranscription.text;
+        transcriptConfidence = 0.78;
+        latestTranscriptionWords = localTranscription.words;
+        drillStatus.textContent = localTranscription.words.length
+          ? "Local Vosk transcript selected with word timestamps."
+          : "Local Vosk transcript selected.";
+        transcriptText.textContent = transcript;
+      }
+    } catch {
+      drillStatus.textContent = "Local Vosk ASR unavailable. Trying optional Speech API...";
+      try {
       const apiTranscription = await transcribeWithSpeechApi(blob);
       if (apiTranscription.text.trim()) {
         const apiScore = scoreTranscriptCandidate(sourceText.value, apiTranscription.text);
@@ -1622,8 +1665,9 @@ async function toggleRecording() {
 
         transcriptText.textContent = transcript;
       }
-    } catch {
-      drillStatus.textContent = "Speech API unavailable. Using browser recognition fallback.";
+      } catch {
+        drillStatus.textContent = "Using browser recognition fallback.";
+      }
     }
     stream.getTracks().forEach((track) => track.stop());
     renderFeedback(durationMs);
