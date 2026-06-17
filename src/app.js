@@ -53,6 +53,8 @@ const phonemeAnalysisList = document.querySelector("#phonemeAnalysisList");
 const startDrillBtn = document.querySelector("#startDrillBtn");
 const drillStatus = document.querySelector("#drillStatus");
 const drillWordList = document.querySelector("#drillWordList");
+const rebuiltPhrasePlayer = document.querySelector("#rebuiltPhrasePlayer");
+const rebuiltPhraseStatus = document.querySelector("#rebuiltPhraseStatus");
 const supportStatus = document.querySelector("#supportStatus");
 
 const SpeechRecognition =
@@ -74,6 +76,7 @@ let latestPhonemeAlignment = null;
 let latestRecordingAudioBuffer = null;
 let recordingAudioContext = null;
 let activeSegmentSource = null;
+let rebuiltPhraseUrl = null;
 let wordAnalysis = [];
 let speechQueue = [];
 let speechQueueIndex = 0;
@@ -692,6 +695,7 @@ function applyPhonemeAlignmentToWordAnalysis(alignment) {
       fluency: previousRow?.fluency ?? 100,
       timingSource: timing ? "MFA direct timing" : "MFA missing timing",
       needsDrill: previousRow?.needsDrill ?? false,
+      replacementAudioBuffer: previousRow?.replacementAudioBuffer ?? null,
       phonemes: alignmentWord?.phonemes || [],
     });
   });
@@ -715,6 +719,7 @@ function applyPhonemeAlignmentToWordAnalysis(alignment) {
         fluency: 100,
         timingSource: timing ? "MFA direct timing" : "MFA missing timing",
         needsDrill: false,
+        replacementAudioBuffer: null,
         phonemes: alignmentWord.phonemes || [],
       });
     });
@@ -722,6 +727,7 @@ function applyPhonemeAlignmentToWordAnalysis(alignment) {
 
   wordAnalysis = nextRows;
   renderWordAnalysis({ rows: wordAnalysis });
+  updateRebuiltPhrasePlayer();
   return updated;
 }
 
@@ -918,6 +924,7 @@ function renderWordAnalysis(analysis) {
   visibleDrillRows.forEach((row) => {
     drillWordList.append(createDrillCard(row));
   });
+  updateRebuiltPhrasePlayer();
 }
 
 function createDrillCard(row) {
@@ -956,7 +963,7 @@ function createDrillCard(row) {
 
   [
     ["Your + model", () => runDrillForWord(row)],
-    ["Slow model", () => speakModelWord(row.expected, 0.68)],
+    ["New + model", () => runNewDrillForWord(row)],
     ["Normal model", () => speakModelWord(row.expected, 0.95)],
     ["Record again", () => recordWordRetry(row, card)],
   ].forEach(([label, handler]) => {
@@ -1043,6 +1050,130 @@ function playBufferedRecordingSegment(startTime, endTime) {
       window.setTimeout(finish, Math.ceil(segmentDuration * 1000) + 120);
     });
   });
+}
+
+function createBufferFromSegment(audioBuffer, startTime, endTime) {
+  const sampleRate = audioBuffer.sampleRate;
+  const startFrame = Math.max(0, Math.floor(startTime * sampleRate));
+  const endFrame = Math.min(audioBuffer.length, Math.ceil(endTime * sampleRate));
+  const frameCount = Math.max(1, endFrame - startFrame);
+  const segment = new AudioBuffer({
+    length: frameCount,
+    numberOfChannels: audioBuffer.numberOfChannels,
+    sampleRate,
+  });
+
+  for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
+    segment.copyToChannel(
+      audioBuffer.getChannelData(channel).slice(startFrame, endFrame),
+      channel,
+    );
+  }
+
+  return segment;
+}
+
+function encodeAudioBufferToWav(audioBuffer) {
+  const channelCount = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const sampleCount = audioBuffer.length;
+  const bytesPerSample = 2;
+  const blockAlign = channelCount * bytesPerSample;
+  const dataSize = sampleCount * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  let offset = 0;
+
+  const writeString = (value) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset, value.charCodeAt(index));
+      offset += 1;
+    }
+  };
+
+  writeString("RIFF");
+  view.setUint32(offset, 36 + dataSize, true);
+  offset += 4;
+  writeString("WAVE");
+  writeString("fmt ");
+  view.setUint32(offset, 16, true);
+  offset += 4;
+  view.setUint16(offset, 1, true);
+  offset += 2;
+  view.setUint16(offset, channelCount, true);
+  offset += 2;
+  view.setUint32(offset, sampleRate, true);
+  offset += 4;
+  view.setUint32(offset, sampleRate * blockAlign, true);
+  offset += 4;
+  view.setUint16(offset, blockAlign, true);
+  offset += 2;
+  view.setUint16(offset, 16, true);
+  offset += 2;
+  writeString("data");
+  view.setUint32(offset, dataSize, true);
+  offset += 4;
+
+  for (let frame = 0; frame < sampleCount; frame += 1) {
+    for (let channel = 0; channel < channelCount; channel += 1) {
+      const sample = Math.max(-1, Math.min(1, audioBuffer.getChannelData(channel)[frame]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function concatenateAudioBuffers(buffers) {
+  const usableBuffers = buffers.filter(Boolean);
+  if (!usableBuffers.length || !recordingAudioContext) return null;
+
+  const sampleRate = recordingAudioContext.sampleRate;
+  const channelCount = Math.max(...usableBuffers.map((buffer) => buffer.numberOfChannels));
+  const totalLength = usableBuffers.reduce((sum, buffer) => sum + buffer.length, 0);
+  const output = new AudioBuffer({
+    length: totalLength,
+    numberOfChannels: channelCount,
+    sampleRate,
+  });
+  let writeOffset = 0;
+
+  usableBuffers.forEach((buffer) => {
+    for (let channel = 0; channel < channelCount; channel += 1) {
+      const sourceChannel = buffer.getChannelData(Math.min(channel, buffer.numberOfChannels - 1));
+      output.copyToChannel(sourceChannel, channel, writeOffset);
+    }
+    writeOffset += buffer.length;
+  });
+
+  return output;
+}
+
+function updateRebuiltPhrasePlayer() {
+  if (!rebuiltPhrasePlayer || !latestRecordingAudioBuffer) return;
+
+  const buffers = wordAnalysis.map((row) => {
+    if (row.replacementAudioBuffer) return row.replacementAudioBuffer;
+    if (!Number.isFinite(row.startTime) || !Number.isFinite(row.endTime)) return null;
+    return createBufferFromSegment(latestRecordingAudioBuffer, row.startTime, row.endTime);
+  });
+  const phraseBuffer = concatenateAudioBuffers(buffers);
+
+  if (!phraseBuffer) {
+    rebuiltPhrasePlayer.hidden = true;
+    rebuiltPhraseStatus.textContent = "Updated phrase is not available for this recording.";
+    return;
+  }
+
+  if (rebuiltPhraseUrl) URL.revokeObjectURL(rebuiltPhraseUrl);
+  rebuiltPhraseUrl = URL.createObjectURL(encodeAudioBufferToWav(phraseBuffer));
+  rebuiltPhrasePlayer.src = rebuiltPhraseUrl;
+  rebuiltPhrasePlayer.hidden = false;
+  const replacements = wordAnalysis.filter((row) => row.replacementAudioBuffer).length;
+  rebuiltPhraseStatus.textContent = replacements
+    ? `${replacements} word${replacements === 1 ? "" : "s"} replaced in the updated phrase.`
+    : "Updated phrase currently matches the original recording.";
 }
 
 async function playRecordingSegment(startTime, endTime) {
@@ -1471,21 +1602,134 @@ function recognizeSingleWord(timeoutMs = 2600) {
   });
 }
 
+function recordRetryAudio(timeoutMs = 2600) {
+  return new Promise(async (resolve) => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      resolve({ blob: null, text: "", confidence: 0 });
+      return;
+    }
+
+    let stream = null;
+    let retryRecognition = null;
+    let settled = false;
+    let bestText = "";
+    let bestConfidence = 0;
+    const chunks = [];
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+
+      try {
+        retryRecognition?.stop();
+      } catch {
+        // Recognition may already be stopped by the browser.
+      }
+
+      resolve({
+        blob: chunks.length ? new Blob(chunks, { type: "audio/webm" }) : null,
+        text: bestText,
+        confidence: bestConfidence,
+      });
+    };
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+
+      if (SpeechRecognition) {
+        retryRecognition = new SpeechRecognition();
+        retryRecognition.lang = "en-US";
+        retryRecognition.interimResults = false;
+        retryRecognition.continuous = false;
+        retryRecognition.onresult = (event) => {
+          const result = event.results?.[0]?.[0];
+          bestText = result?.transcript || "";
+          bestConfidence = result?.confidence || 0;
+        };
+      }
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data);
+      };
+      recorder.onstop = () => {
+        stream?.getTracks().forEach((track) => track.stop());
+        finish();
+      };
+      recorder.start();
+      retryRecognition?.start();
+
+      window.setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+      }, timeoutMs);
+    } catch {
+      stream?.getTracks().forEach((track) => track.stop());
+      finish();
+    }
+  });
+}
+
+async function decodeRetryAudio(blob) {
+  if (!blob || !recordingAudioContext) return null;
+
+  try {
+    return await recordingAudioContext.decodeAudioData(await blob.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
 async function recordWordRetry(row, card) {
   const retry = card.querySelector(".retry-result");
   const score = card.querySelector(".drill-score");
 
   retry.textContent = `Say "${row.expected}" now...`;
-  const result = await recognizeSingleWord();
+  const result = await recordRetryAudio();
   const retryScore = scoreRetryWord(row.expected, result.text);
+  const replacementAudioBuffer = await decodeRetryAudio(result.blob);
+
+  if (replacementAudioBuffer) {
+    row.replacementAudioBuffer = replacementAudioBuffer;
+    row.spoken = retryScore.spoken;
+    const currentRow = wordAnalysis.find((item) => item.id === row.id);
+    if (currentRow) {
+      currentRow.replacementAudioBuffer = replacementAudioBuffer;
+      currentRow.spoken = retryScore.spoken;
+    }
+    updateRebuiltPhrasePlayer();
+  }
 
   score.textContent = retryScore.pronunciation.toString();
   score.className = `drill-score ${metricClass(retryScore.pronunciation)}`;
-  retry.textContent = `heard: ${retryScore.spoken}. retry pronunciation ${retryScore.pronunciation}, accuracy ${retryScore.accuracy}.`;
+  retry.textContent = replacementAudioBuffer
+    ? `new: ${retryScore.spoken}. retry pronunciation ${retryScore.pronunciation}, accuracy ${retryScore.accuracy}.`
+    : `heard: ${retryScore.spoken}. retry pronunciation ${retryScore.pronunciation}, accuracy ${retryScore.accuracy}.`;
 
   if (retryScore.pronunciation < 82) {
     await speakModelWord(row.expected, 0.72);
   }
+}
+
+async function runNewDrillForWord(row) {
+  if (!row.replacementAudioBuffer || !recordingAudioContext) {
+    drillStatus.textContent = `No new recording for "${row.expected}" yet. Use Record again first.`;
+    return;
+  }
+
+  drillStatus.textContent = `New segment: ${row.spoken}. Model: ${row.expected}.`;
+  const source = recordingAudioContext.createBufferSource();
+  source.buffer = row.replacementAudioBuffer;
+  source.connect(recordingAudioContext.destination);
+  stopActiveRecordingSegment();
+  activeSegmentSource = source;
+
+  await new Promise((resolve) => {
+    source.onended = resolve;
+    recordingAudioContext.resume().then(() => source.start());
+  });
+  activeSegmentSource = null;
+  await new Promise((resolve) => window.setTimeout(resolve, 220));
+  await speakModelWord(row.expected);
 }
 
 async function runDrillForWord(row) {
@@ -1513,6 +1757,17 @@ function resetPronunciationAnalysis() {
   recordingAudioContext?.close();
   recordingAudioContext = null;
   latestRecordingAudioBuffer = null;
+  if (rebuiltPhraseUrl) {
+    URL.revokeObjectURL(rebuiltPhraseUrl);
+    rebuiltPhraseUrl = null;
+  }
+  if (rebuiltPhrasePlayer) {
+    rebuiltPhrasePlayer.removeAttribute("src");
+    rebuiltPhrasePlayer.hidden = true;
+  }
+  if (rebuiltPhraseStatus) {
+    rebuiltPhraseStatus.textContent = "Record words again to build an updated phrase.";
+  }
   wordAnalysis = [];
   latestSpeechWindow = null;
   latestTranscriptionWords = [];

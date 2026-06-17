@@ -455,6 +455,20 @@ input[type="range"] {
   margin-top: 18px;
 }
 
+.rebuilt-phrase-panel {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.rebuilt-phrase-panel audio {
+  width: 100%;
+}
+
 .panel-header-row {
   display: flex;
   align-items: center;
