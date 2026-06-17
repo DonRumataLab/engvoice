@@ -778,7 +778,7 @@ function applyPhonemeAlignmentToWordAnalysis(alignment) {
 
     if (timing) updated += 1;
 
-    nextRows.push({
+    const nextRow = {
       id: index,
       expected,
       spoken,
@@ -793,7 +793,11 @@ function applyPhonemeAlignmentToWordAnalysis(alignment) {
       needsDrill: previousRow?.needsDrill ?? false,
       replacementAudioBuffer: previousRow?.replacementAudioBuffer ?? null,
       phonemes: alignmentWord?.phonemes || [],
-    });
+      phonemeIssues: [],
+    };
+    nextRow.phonemeIssues = detectPhonemeIssues(nextRow);
+    if (nextRow.phonemeIssues.length) nextRow.needsDrill = true;
+    nextRows.push(nextRow);
   });
 
   if (alignmentWords.length > expectedWords.length) {
@@ -802,7 +806,7 @@ function applyPhonemeAlignmentToWordAnalysis(alignment) {
       const timing = getAlignmentWordTiming(alignmentWord, index, alignmentWords);
       if (timing) updated += 1;
 
-      nextRows.push({
+      const nextRow = {
         id: index,
         expected: alignmentWord.normalized,
         spoken: alignmentWord.normalized,
@@ -817,7 +821,11 @@ function applyPhonemeAlignmentToWordAnalysis(alignment) {
         needsDrill: false,
         replacementAudioBuffer: null,
         phonemes: alignmentWord.phonemes || [],
-      });
+        phonemeIssues: [],
+      };
+      nextRow.phonemeIssues = detectPhonemeIssues(nextRow);
+      if (nextRow.phonemeIssues.length) nextRow.needsDrill = true;
+      nextRows.push(nextRow);
     });
   }
 
@@ -1010,7 +1018,7 @@ function buildWordAnalysis(expectedText, spokenText, durationMs) {
     const startTime = apiTiming?.start ?? expectedTiming?.start ?? null;
     const endTime = apiTiming?.end ?? expectedTiming?.end ?? null;
 
-    return {
+    const row = {
       id: index,
       expected: item.expected,
       spoken: item.spoken || "missed",
@@ -1022,8 +1030,13 @@ function buildWordAnalysis(expectedText, spokenText, durationMs) {
       accuracy: Math.max(0, Math.min(100, accuracy)),
       fluency: Math.max(0, Math.min(100, fluency)),
       timingSource: apiTiming ? "trusted ASR timing" : "reference phrase timing",
+      phonemes: [],
+      phonemeIssues: [],
       needsDrill: !item.spoken || pronunciation < 82 || accuracy < 80,
     };
+    row.phonemeIssues = detectPhonemeIssues(row);
+    if (row.phonemeIssues.length) row.needsDrill = true;
+    return row;
   });
 
   const average = (key) =>
@@ -1097,6 +1110,142 @@ function getPhoneticHint(word) {
     .replace(/ough/g, "oh")}/`;
 }
 
+function normalizePhoneLabel(label) {
+  return String(label || "")
+    .toLowerCase()
+    .replace(/[0-9]/g, "")
+    .replace(/[^a-z]/g, "");
+}
+
+function getPhoneDuration(phonemes, candidates) {
+  const candidateSet = new Set(candidates);
+  const match = (phonemes || []).find((phone) => candidateSet.has(normalizePhoneLabel(phone.label)));
+  return match && Number.isFinite(match.start) && Number.isFinite(match.end)
+    ? Math.max(0, match.end - match.start)
+    : null;
+}
+
+function hasExpectedFinalConsonant(word) {
+  return /(?:[bcdfghjklmnpqrstvwxz]|ch|ck|dge|ge|sh|th|tch)$/i.test(word);
+}
+
+function getFinalConsonantLabel(word) {
+  return word.match(/(?:tch|dge|ch|ck|ge|sh|th|[bcdfghjklmnpqrstvwxz])$/i)?.[0] || word.slice(-1);
+}
+
+function detectPhonemeIssues(row) {
+  const expected = normalizeText(row.expected);
+  const spoken = normalizeText(row.spoken);
+  const phonemes = row.phonemes || [];
+  const issues = [];
+  const addIssue = (type, detail) => {
+    if (!issues.some((issue) => issue.type === type)) issues.push({ type, detail });
+  };
+
+  if (!expected) return issues;
+
+  const finalConsonant = getFinalConsonantLabel(expected);
+  const spokenFinal = spoken.slice(-1);
+  const wordDuration =
+    Number.isFinite(row.startTime) && Number.isFinite(row.endTime)
+      ? Math.max(0, row.endTime - row.startTime)
+      : 0;
+  const finalPhone = phonemes.at(-1);
+  const finalPhoneDuration =
+    finalPhone && Number.isFinite(finalPhone.start) && Number.isFinite(finalPhone.end)
+      ? Math.max(0, finalPhone.end - finalPhone.start)
+      : null;
+
+  if (
+    hasExpectedFinalConsonant(expected) &&
+    spoken &&
+    !spoken.endsWith(finalConsonant) &&
+    expected.slice(-1) !== spokenFinal &&
+    !spoken.endsWith(expected.slice(-2))
+  ) {
+    addIssue("final consonant", `Finish the final "${finalConsonant}" sound.`);
+  } else if (
+    hasExpectedFinalConsonant(expected) &&
+    finalPhoneDuration !== null &&
+    wordDuration > 0 &&
+    finalPhoneDuration / wordDuration < 0.12
+  ) {
+    addIssue("final consonant", "The last consonant looks very short.");
+  }
+
+  if (expected.includes("th")) {
+    const thDuration = getPhoneDuration(phonemes, ["th", "dh"]);
+    const likelyThSubstitution =
+      spoken &&
+      (normalizeText(expected.replace(/th/g, "t")) === spoken ||
+        normalizeText(expected.replace(/th/g, "d")) === spoken ||
+        normalizeText(expected.replace(/th/g, "s")) === spoken ||
+        normalizeText(expected.replace(/th/g, "z")) === spoken);
+    if (likelyThSubstitution || (phonemes.length > 0 && thDuration === null)) {
+      addIssue("weak th", "Put the tongue lightly between the teeth for th.");
+    } else if (thDuration < 0.05) {
+      addIssue("weak th", "Hold th a little longer; it sounds too weak.");
+    }
+  }
+
+  if (/[vw]/.test(expected)) {
+    const expectedHasV = expected.includes("v");
+    const expectedHasW = expected.includes("w");
+    const spokenHasV = spoken.includes("v");
+    const spokenHasW = spoken.includes("w");
+    if ((expectedHasV && spokenHasW && !spokenHasV) || (expectedHasW && spokenHasV && !spokenHasW)) {
+      addIssue("v/w", expectedHasV ? "Use voiced v with teeth on lip." : "Round lips for w; do not bite the lip.");
+    }
+  }
+
+  if (expected.includes("r")) {
+    const rDuration = getPhoneDuration(phonemes, ["r", "er"]);
+    if (rDuration !== null && rDuration > 0.22) {
+      addIssue("r color", "Shorten and relax r; avoid a hard rolled sound.");
+    } else if (spoken && !spoken.includes("r") && expected.includes("r")) {
+      addIssue("r color", "Keep the English r present without rolling it.");
+    }
+  }
+
+  const stressedVowels = phonemes.filter((phone) => /[12]/.test(String(phone.label || "")));
+  if (phonemes.length && expected.length >= 6 && !stressedVowels.length) {
+    addIssue("stress", "Stress is unclear; make the main syllable stronger.");
+  } else if (stressedVowels.length) {
+    const longestStressed = Math.max(
+      ...stressedVowels.map((phone) => Math.max(0, Number(phone.end) - Number(phone.start))),
+    );
+    if (longestStressed < 0.08) {
+      addIssue("stress", "Lengthen the stressed vowel slightly.");
+    }
+  }
+
+  if (!issues.length && (row.pronunciation < 76 || row.accuracy < 72)) {
+    addIssue("unclear sound", "Compare the word slowly with the model pronunciation.");
+  }
+
+  return issues.slice(0, 3);
+}
+
+function createPhonemeIssueList(row) {
+  const issues = row.phonemeIssues || [];
+  if (!issues.length) return null;
+
+  const list = document.createElement("div");
+  list.className = "phoneme-issue-list";
+  issues.forEach((issue) => {
+    const chip = document.createElement("span");
+    chip.className = "phoneme-issue";
+    chip.title = issue.detail;
+    chip.textContent = issue.type;
+    list.append(chip);
+  });
+  const detail = document.createElement("small");
+  detail.className = "phoneme-issue-detail";
+  detail.textContent = issues.map((issue) => issue.detail).join(" ");
+  list.append(detail);
+  return list;
+}
+
 function scoreRetryWord(expected, spoken) {
   const spokenWord = tokenize(spoken)[0] || "";
   const similarity = wordSimilarity(normalizeText(expected), spokenWord);
@@ -1141,6 +1290,8 @@ function renderWordAnalysis(analysis) {
     const heard = document.createElement("small");
     heard.textContent = `heard: ${row.spoken}`;
     wordBlock.append(expected, heard);
+    const phonemeIssues = createPhonemeIssueList(row);
+    if (phonemeIssues) wordBlock.append(phonemeIssues);
     card.append(wordBlock);
 
     [
@@ -1188,12 +1339,14 @@ function createDrillCard(row) {
 
   const timing = document.createElement("small");
   timing.textContent = formatRowTiming(row);
+  const phonemeIssues = createPhonemeIssueList(row);
 
   const status = document.createElement("span");
   status.className = `drill-status-badge ${row.needsDrill ? "needs-drill" : "is-clear"}`;
   status.textContent = row.needsDrill ? "needs practice" : "checked";
 
   main.append(word, status, phonetic, heard, timing);
+  if (phonemeIssues) main.append(phonemeIssues);
 
   const score = document.createElement("span");
   score.className = `drill-score ${metricClass(row.pronunciation)}`;
@@ -1738,7 +1891,7 @@ function renderPhonemeAlignment(alignment) {
     ? `${alignment.words.length} words aligned by MFA. ${updatedDrillWords} drill timings updated.`
     : `${alignment.words.length} words aligned by MFA. Drill timings were not updated.`;
 
-  alignment.words.forEach((word) => {
+  alignment.words.forEach((word, index) => {
     const card = document.createElement("article");
     card.className = "phoneme-card";
 
@@ -1763,7 +1916,15 @@ function renderPhonemeAlignment(alignment) {
       phones.append(chip);
     }
 
-    card.append(header, phones);
+    const matchedRow =
+      wordAnalysis[index] ||
+      wordAnalysis.find((row) => normalizeText(row.expected) === normalizeText(word.label));
+    const issueList = createPhonemeIssueList(matchedRow || { phonemeIssues: [] });
+    if (issueList) {
+      card.append(header, phones, issueList);
+    } else {
+      card.append(header, phones);
+    }
     phonemeAnalysisList.append(card);
   });
 }
@@ -1934,19 +2095,25 @@ async function recordWordRetry(row, card) {
   if (replacementAudioBuffer) {
     row.replacementAudioBuffer = replacementAudioBuffer;
     row.spoken = retryScore.spoken;
+    row.phonemeIssues = detectPhonemeIssues(row);
     const currentRow = wordAnalysis.find((item) => item.id === row.id);
     if (currentRow) {
       currentRow.replacementAudioBuffer = replacementAudioBuffer;
       currentRow.spoken = retryScore.spoken;
+      currentRow.phonemeIssues = detectPhonemeIssues(currentRow);
+      currentRow.needsDrill = currentRow.needsDrill || currentRow.phonemeIssues.length > 0;
     }
     updateRebuiltPhrasePlayer();
   }
 
   score.textContent = retryScore.pronunciation.toString();
   score.className = `drill-score ${metricClass(retryScore.pronunciation)}`;
+  const retryIssues = row.phonemeIssues?.length
+    ? ` Focus: ${row.phonemeIssues.map((issue) => issue.type).join(", ")}.`
+    : "";
   retry.textContent = replacementAudioBuffer
-    ? `new: ${retryScore.spoken}. retry pronunciation ${retryScore.pronunciation}, accuracy ${retryScore.accuracy}.`
-    : `heard: ${retryScore.spoken}. retry pronunciation ${retryScore.pronunciation}, accuracy ${retryScore.accuracy}.`;
+    ? `new: ${retryScore.spoken}. retry pronunciation ${retryScore.pronunciation}, accuracy ${retryScore.accuracy}.${retryIssues}`
+    : `heard: ${retryScore.spoken}. retry pronunciation ${retryScore.pronunciation}, accuracy ${retryScore.accuracy}.${retryIssues}`;
 
   if (retryScore.pronunciation < 82) {
     await speakModelWord(row.expected, 0.72);

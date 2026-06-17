@@ -624,6 +624,29 @@ input[type="range"] {
   background: #fde4dc;
 }
 
+.phoneme-issue-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.phoneme-issue {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 7px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--warn);
+  background: #fde4dc;
+}
+
+.phoneme-issue-detail {
+  flex-basis: 100%;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .drill-word-list {
   display: grid;
   gap: 10px;
