@@ -71,6 +71,9 @@ let latestSpeechWindow = null;
 let latestTranscriptionWords = [];
 let latestAudioAnalysis = null;
 let latestPhonemeAlignment = null;
+let latestRecordingAudioBuffer = null;
+let recordingAudioContext = null;
+let activeSegmentSource = null;
 let wordAnalysis = [];
 let speechQueue = [];
 let speechQueueIndex = 0;
@@ -941,13 +944,78 @@ function waitForRecordingMetadata() {
   });
 }
 
+function stopActiveRecordingSegment() {
+  if (!activeSegmentSource) return;
+
+  try {
+    activeSegmentSource.stop();
+  } catch {
+    // The segment may have already ended.
+  }
+  activeSegmentSource = null;
+}
+
+async function prepareRecordingAudioBuffer(blob) {
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextConstructor) return;
+
+  try {
+    if (recordingAudioContext) {
+      stopActiveRecordingSegment();
+      await recordingAudioContext.close();
+    }
+
+    recordingAudioContext = new AudioContextConstructor();
+    latestRecordingAudioBuffer = await recordingAudioContext.decodeAudioData(await blob.arrayBuffer());
+  } catch {
+    latestRecordingAudioBuffer = null;
+  }
+}
+
+function playBufferedRecordingSegment(startTime, endTime) {
+  if (!latestRecordingAudioBuffer || !recordingAudioContext) return null;
+
+  const duration = latestRecordingAudioBuffer.duration;
+  const start = Math.max(0, Math.min(startTime, duration));
+  const end = Math.max(start + 0.18, Math.min(endTime, duration));
+  const segmentDuration = Math.max(0.18, Math.min(duration - start, end - start));
+  if (!Number.isFinite(segmentDuration) || segmentDuration <= 0) return null;
+
+  stopActiveRecordingSegment();
+  const source = recordingAudioContext.createBufferSource();
+  source.buffer = latestRecordingAudioBuffer;
+  source.connect(recordingAudioContext.destination);
+  activeSegmentSource = source;
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    const finish = () => {
+      if (resolved) return;
+      resolved = true;
+      if (activeSegmentSource === source) activeSegmentSource = null;
+      resolve(true);
+    };
+
+    source.onended = finish;
+    recordingAudioContext.resume().then(() => {
+      source.start(0, start, segmentDuration);
+      window.setTimeout(finish, Math.ceil(segmentDuration * 1000) + 120);
+    });
+  });
+}
+
 async function playRecordingSegment(startTime, endTime) {
   if (!recordingPlayer.src || startTime === null || endTime === null) return false;
 
+  const bufferedPlayback = playBufferedRecordingSegment(startTime, endTime);
+  if (bufferedPlayback) return bufferedPlayback;
+
   await waitForRecordingMetadata();
-  const duration = recordingPlayer.duration || latestRecordingDurationMs / 1000;
+  const duration = Number.isFinite(recordingPlayer.duration)
+    ? recordingPlayer.duration
+    : latestRecordingDurationMs / 1000;
   const start = Math.max(0, Math.min(startTime, duration));
-  const end = Math.max(start + 0.25, Math.min(endTime, duration));
+  const end = Math.min(duration, Math.max(start + 0.25, Math.min(endTime, duration)));
 
   recordingPlayer.pause();
   recordingPlayer.currentTime = start;
@@ -1350,7 +1418,7 @@ async function recordWordRetry(row, card) {
 }
 
 async function runDrillForWord(row) {
-  drillStatus.textContent = `Estimated user segment: ${row.spoken}. Model: ${row.expected}.`;
+  drillStatus.textContent = `Your segment (${row.timingSource}): ${row.spoken}. Model: ${row.expected}.`;
 
   if (row.startTime !== null && row.endTime !== null) {
     const played = await playRecordingSegment(row.startTime, row.endTime);
@@ -1370,6 +1438,10 @@ function resetPronunciationAnalysis() {
   pronunciationMetric.textContent = "--";
   accuracyMetric.textContent = "--";
   fluencyMetric.textContent = "--";
+  stopActiveRecordingSegment();
+  recordingAudioContext?.close();
+  recordingAudioContext = null;
+  latestRecordingAudioBuffer = null;
   wordAnalysis = [];
   latestSpeechWindow = null;
   latestTranscriptionWords = [];
@@ -1480,6 +1552,7 @@ async function toggleRecording() {
     recordingPlayer.hidden = false;
     playRecordingBtn.disabled = false;
     drillStatus.textContent = "Analyzing voice timing...";
+    await prepareRecordingAudioBuffer(blob);
     const audioAnalysis = await analyzeAudioSignal(blob);
     renderAudioAnalysis(audioAnalysis);
     latestSpeechWindow = audioAnalysis?.speechWindow || (await detectSpeechWindow(blob));
