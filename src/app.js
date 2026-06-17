@@ -32,6 +32,14 @@ const recordBtn = document.querySelector("#recordBtn");
 const playRecordingBtn = document.querySelector("#playRecordingBtn");
 const recordingTimer = document.querySelector("#recordingTimer");
 const recordingPlayer = document.querySelector("#recordingPlayer");
+const waveformCanvas = document.querySelector("#waveformCanvas");
+const waveformStatus = document.querySelector("#waveformStatus");
+const waveformWordLabel = document.querySelector("#waveformWordLabel");
+const waveStartBackBtn = document.querySelector("#waveStartBackBtn");
+const waveStartForwardBtn = document.querySelector("#waveStartForwardBtn");
+const waveEndBackBtn = document.querySelector("#waveEndBackBtn");
+const waveEndForwardBtn = document.querySelector("#waveEndForwardBtn");
+const wavePlayBtn = document.querySelector("#wavePlayBtn");
 const practiceScore = document.querySelector("#practiceScore");
 const scoreSummary = document.querySelector("#scoreSummary");
 const feedbackList = document.querySelector("#feedbackList");
@@ -81,6 +89,7 @@ let recordingAudioContext = null;
 let activeSegmentSource = null;
 let rebuiltPhraseUrl = null;
 let wordAnalysis = [];
+let selectedWaveformWordId = null;
 let practiceChunks = [];
 let activeChunkIndex = 0;
 let speechQueue = [];
@@ -826,6 +835,153 @@ function formatRowTiming(row) {
   return `${row.timingSource}: ${row.startTime.toFixed(2)}-${row.endTime.toFixed(2)}s`;
 }
 
+function getSelectedWaveformRow() {
+  return wordAnalysis.find((row) => row.id === selectedWaveformWordId) || null;
+}
+
+function setWaveformControlsEnabled(enabled) {
+  [
+    waveStartBackBtn,
+    waveStartForwardBtn,
+    waveEndBackBtn,
+    waveEndForwardBtn,
+    wavePlayBtn,
+  ].forEach((button) => {
+    button.disabled = !enabled;
+  });
+}
+
+function updateWaveformSelectionText() {
+  const row = getSelectedWaveformRow();
+  if (!row || !Number.isFinite(row.startTime) || !Number.isFinite(row.endTime)) {
+    waveformWordLabel.textContent = "No word selected";
+    setWaveformControlsEnabled(false);
+    return;
+  }
+
+  waveformWordLabel.textContent = `${row.expected}: ${row.startTime.toFixed(2)}-${row.endTime.toFixed(2)}s`;
+  setWaveformControlsEnabled(true);
+}
+
+function selectWaveformWord(rowId) {
+  selectedWaveformWordId = rowId;
+  document.querySelectorAll(".word-card").forEach((card) => {
+    card.classList.toggle("is-selected", Number(card.dataset.wordId) === rowId);
+  });
+  updateWaveformSelectionText();
+  drawWaveform();
+}
+
+function drawWaveform() {
+  if (!waveformCanvas) return;
+
+  const context = waveformCanvas.getContext("2d");
+  const rect = waveformCanvas.getBoundingClientRect();
+  const width = Math.max(360, Math.floor(rect.width || waveformCanvas.clientWidth || 900));
+  const height = Number(waveformCanvas.getAttribute("height")) || 190;
+  const pixelRatio = window.devicePixelRatio || 1;
+  waveformCanvas.width = Math.floor(width * pixelRatio);
+  waveformCanvas.height = Math.floor(height * pixelRatio);
+  context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#f7faf8";
+  context.fillRect(0, 0, width, height);
+
+  if (!latestRecordingAudioBuffer) {
+    context.fillStyle = "#6d7975";
+    context.font = "14px system-ui, sans-serif";
+    context.fillText("Record speech to see the waveform.", 16, height / 2);
+    waveformStatus.textContent = "Record speech to edit word boundaries.";
+    updateWaveformSelectionText();
+    return;
+  }
+
+  const data = latestRecordingAudioBuffer.getChannelData(0);
+  const duration = latestRecordingAudioBuffer.duration;
+  const centerY = height / 2;
+  const usableHeight = height - 36;
+  const samplesPerPixel = Math.max(1, Math.floor(data.length / width));
+
+  context.strokeStyle = "#1c7565";
+  context.lineWidth = 1;
+  context.beginPath();
+  for (let x = 0; x < width; x += 1) {
+    const start = x * samplesPerPixel;
+    const end = Math.min(data.length, start + samplesPerPixel);
+    let min = 1;
+    let max = -1;
+    for (let index = start; index < end; index += 1) {
+      const sample = data[index];
+      if (sample < min) min = sample;
+      if (sample > max) max = sample;
+    }
+    context.moveTo(x, centerY + min * usableHeight * 0.42);
+    context.lineTo(x, centerY + max * usableHeight * 0.42);
+  }
+  context.stroke();
+
+  wordAnalysis.forEach((row) => {
+    if (!Number.isFinite(row.startTime) || !Number.isFinite(row.endTime)) return;
+
+    const startX = Math.max(0, Math.min(width, (row.startTime / duration) * width));
+    const endX = Math.max(startX + 2, Math.min(width, (row.endTime / duration) * width));
+    const isSelected = row.id === selectedWaveformWordId;
+    context.fillStyle = isSelected ? "rgba(28, 117, 101, 0.2)" : "rgba(34, 87, 184, 0.1)";
+    context.fillRect(startX, 0, endX - startX, height);
+    context.strokeStyle = isSelected ? "#1c7565" : "rgba(34, 87, 184, 0.65)";
+    context.lineWidth = isSelected ? 2 : 1;
+    context.beginPath();
+    context.moveTo(startX, 0);
+    context.lineTo(startX, height);
+    context.moveTo(endX, 0);
+    context.lineTo(endX, height);
+    context.stroke();
+
+    if (endX - startX > 34) {
+      context.fillStyle = isSelected ? "#12312c" : "#44504c";
+      context.font = "12px system-ui, sans-serif";
+      context.fillText(row.expected.slice(0, 12), startX + 4, 17);
+    }
+  });
+
+  waveformStatus.textContent = wordAnalysis.length
+    ? "Click a word region, then move its boundaries if playback cuts badly."
+    : "Waveform is ready. Word boundaries will appear after analysis.";
+  updateWaveformSelectionText();
+}
+
+function adjustSelectedWaveformBoundary(boundary, deltaSeconds) {
+  const row = getSelectedWaveformRow();
+  if (!row || !latestRecordingAudioBuffer) return;
+
+  const duration = latestRecordingAudioBuffer.duration;
+  const minDuration = 0.12;
+  const rowIndex = wordAnalysis.findIndex((item) => item.id === row.id);
+  const previous = rowIndex > 0 ? wordAnalysis[rowIndex - 1] : null;
+  const next = rowIndex >= 0 ? wordAnalysis[rowIndex + 1] : null;
+  const previousEnd = Number.isFinite(previous?.endTime) ? previous.endTime : 0;
+  const nextStart = Number.isFinite(next?.startTime) ? next.startTime : duration;
+
+  if (boundary === "start") {
+    const minStart = previousEnd;
+    const maxStart = row.endTime - minDuration;
+    if (minStart <= maxStart) {
+      row.startTime = Math.max(minStart, Math.min(maxStart, row.startTime + deltaSeconds));
+    }
+  } else {
+    const minEnd = row.startTime + minDuration;
+    const maxEnd = nextStart;
+    if (minEnd <= maxEnd) {
+      row.endTime = Math.min(maxEnd, Math.max(minEnd, row.endTime + deltaSeconds));
+    }
+  }
+
+  row.timingSource = "manual waveform timing";
+  renderWordAnalysis({ rows: wordAnalysis });
+  selectWaveformWord(row.id);
+  updateRebuiltPhrasePlayer();
+}
+
 function buildWordAnalysis(expectedText, spokenText, durationMs) {
   const expected = tokenize(expectedText);
   const timedText = getTimedTranscriptText();
@@ -953,6 +1109,9 @@ function scoreRetryWord(expected, spoken) {
 
 function renderWordAnalysis(analysis) {
   wordAnalysis = analysis.rows;
+  if (!wordAnalysis.some((row) => row.id === selectedWaveformWordId)) {
+    selectedWaveformWordId = wordAnalysis[0]?.id ?? null;
+  }
   wordAnalysisList.textContent = "";
   drillWordList.textContent = "";
 
@@ -972,6 +1131,9 @@ function renderWordAnalysis(analysis) {
   wordAnalysis.forEach((row) => {
     const card = document.createElement("article");
     card.className = `word-card ${row.needsDrill ? "needs-drill" : ""}`;
+    card.dataset.wordId = row.id;
+    card.classList.toggle("is-selected", row.id === selectedWaveformWordId);
+    card.addEventListener("click", () => selectWaveformWord(row.id));
 
     const wordBlock = document.createElement("div");
     const expected = document.createElement("strong");
@@ -1002,6 +1164,7 @@ function renderWordAnalysis(analysis) {
   visibleDrillRows.forEach((row) => {
     drillWordList.append(createDrillCard(row));
   });
+  drawWaveform();
   updateRebuiltPhrasePlayer();
 }
 
@@ -1093,8 +1256,10 @@ async function prepareRecordingAudioBuffer(blob) {
 
     recordingAudioContext = new AudioContextConstructor();
     latestRecordingAudioBuffer = await recordingAudioContext.decodeAudioData(await blob.arrayBuffer());
+    drawWaveform();
   } catch {
     latestRecordingAudioBuffer = null;
+    drawWaveform();
   }
 }
 
@@ -1847,6 +2012,7 @@ function resetPronunciationAnalysis() {
     rebuiltPhraseStatus.textContent = "Record words again to build an updated phrase.";
   }
   wordAnalysis = [];
+  selectedWaveformWordId = null;
   latestAnalysisReferenceText = "";
   latestSpeechWindow = null;
   latestTranscriptionWords = [];
@@ -1864,6 +2030,7 @@ function resetPronunciationAnalysis() {
   phonemeAnalysisList.textContent = "";
   wordAnalysisList.textContent = "";
   drillWordList.textContent = "";
+  drawWaveform();
   wordAnalysisSummary.textContent = "Record speech to see word scores.";
   drillStatus.textContent = "Recording new attempt...";
   startDrillBtn.disabled = true;
@@ -2115,6 +2282,41 @@ recordBtn.addEventListener("click", () => {
   });
 });
 playRecordingBtn.addEventListener("click", () => recordingPlayer.play());
+waveformCanvas.addEventListener("click", (event) => {
+  if (!latestRecordingAudioBuffer || !wordAnalysis.length) return;
+
+  const rect = waveformCanvas.getBoundingClientRect();
+  const positionSeconds =
+    ((event.clientX - rect.left) / Math.max(1, rect.width)) * latestRecordingAudioBuffer.duration;
+  const exactRow = wordAnalysis.find(
+    (row) =>
+      Number.isFinite(row.startTime) &&
+      Number.isFinite(row.endTime) &&
+      positionSeconds >= row.startTime &&
+      positionSeconds <= row.endTime,
+  );
+  const nearestRow =
+    exactRow ||
+    wordAnalysis
+      .filter((row) => Number.isFinite(row.startTime) && Number.isFinite(row.endTime))
+      .sort((a, b) => {
+        const aCenter = (a.startTime + a.endTime) / 2;
+        const bCenter = (b.startTime + b.endTime) / 2;
+        return Math.abs(aCenter - positionSeconds) - Math.abs(bCenter - positionSeconds);
+      })[0];
+
+  if (nearestRow) selectWaveformWord(nearestRow.id);
+});
+waveStartBackBtn.addEventListener("click", () => adjustSelectedWaveformBoundary("start", -0.05));
+waveStartForwardBtn.addEventListener("click", () => adjustSelectedWaveformBoundary("start", 0.05));
+waveEndBackBtn.addEventListener("click", () => adjustSelectedWaveformBoundary("end", -0.05));
+waveEndForwardBtn.addEventListener("click", () => adjustSelectedWaveformBoundary("end", 0.05));
+wavePlayBtn.addEventListener("click", async () => {
+  const row = getSelectedWaveformRow();
+  if (!row) return;
+  await runDrillForWord(row);
+});
+window.addEventListener("resize", drawWaveform);
 
 if (window.speechSynthesis) {
   loadVoices();
@@ -2124,3 +2326,4 @@ if (window.speechSynthesis) {
 updateTextStats();
 updateReaderTextStats();
 updateSupportStatus();
+drawWaveform();

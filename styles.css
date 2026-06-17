@@ -510,6 +510,45 @@ input[type="range"] {
   width: 100%;
 }
 
+.waveform-panel {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.waveform-canvas {
+  width: 100%;
+  height: 190px;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf8;
+  cursor: crosshair;
+}
+
+.waveform-controls {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.5fr) minmax(280px, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.waveform-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.waveform-actions button {
+  min-height: 36px;
+  padding: 8px 10px;
+}
+
 .panel-header-row {
   display: flex;
   align-items: center;
@@ -539,11 +578,17 @@ input[type="range"] {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfdfc;
+  cursor: pointer;
 }
 
 .word-card.needs-drill {
   border-color: rgba(182, 75, 53, 0.4);
   background: #fff9f6;
+}
+
+.word-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(28, 117, 101, 0.12);
 }
 
 .word-card strong,
@@ -787,6 +832,14 @@ input[type="range"] {
 
   .word-card > div {
     grid-column: 1 / -1;
+  }
+
+  .waveform-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .waveform-actions {
+    justify-content: flex-start;
   }
 
   .drill-card {

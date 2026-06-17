@@ -105,6 +105,24 @@
 
               <audio id="recordingPlayer" controls hidden></audio>
 
+              <section class="waveform-panel" aria-label="Recording waveform editor">
+                <div class="panel-header-row">
+                  <h2>Waveform editor</h2>
+                  <span id="waveformStatus" class="muted">Record speech to edit word boundaries.</span>
+                </div>
+                <canvas id="waveformCanvas" class="waveform-canvas" width="1200" height="190"></canvas>
+                <div class="waveform-controls">
+                  <strong id="waveformWordLabel">No word selected</strong>
+                  <div class="waveform-actions">
+                    <button id="waveStartBackBtn" type="button" disabled>Start -50ms</button>
+                    <button id="waveStartForwardBtn" type="button" disabled>Start +50ms</button>
+                    <button id="waveEndBackBtn" type="button" disabled>End -50ms</button>
+                    <button id="waveEndForwardBtn" type="button" disabled>End +50ms</button>
+                    <button id="wavePlayBtn" type="button" disabled>Play word</button>
+                  </div>
+                </div>
+              </section>
+
               <div class="analysis-layout">
                 <article class="score-card">
                   <span class="score-label">Practice score</span>
