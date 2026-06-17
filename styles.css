@@ -245,6 +245,47 @@ button:focus-visible,
   outline: 3px solid rgba(34, 87, 184, 0.15);
 }
 
+.phrase-chunks {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.phrase-chunks-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chunk-list {
+  display: grid;
+  gap: 8px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.chunk-button {
+  width: 100%;
+  min-height: 40px;
+  justify-content: flex-start;
+  padding: 9px 11px;
+  text-align: left;
+  line-height: 1.35;
+  color: var(--ink);
+  background: #fff;
+}
+
+.chunk-button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .file-row {
   display: flex;
   align-items: center;

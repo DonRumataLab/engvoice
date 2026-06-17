@@ -17,6 +17,8 @@ const readerCurrentText = document.querySelector("#readerCurrentText");
 const sourceText = document.querySelector("#sourceText");
 const fileInput = document.querySelector("#fileInput");
 const fileName = document.querySelector("#fileName");
+const chunkSummary = document.querySelector("#chunkSummary");
+const chunkList = document.querySelector("#chunkList");
 const wordCount = document.querySelector("#wordCount");
 const readTime = document.querySelector("#readTime");
 const targetPace = document.querySelector("#targetPace");
@@ -74,10 +76,13 @@ let latestTranscriptionWords = [];
 let latestAudioAnalysis = null;
 let latestPhonemeAlignment = null;
 let latestRecordingAudioBuffer = null;
+let latestAnalysisReferenceText = "";
 let recordingAudioContext = null;
 let activeSegmentSource = null;
 let rebuiltPhraseUrl = null;
 let wordAnalysis = [];
+let practiceChunks = [];
+let activeChunkIndex = 0;
 let speechQueue = [];
 let speechQueueIndex = 0;
 let speechStopped = false;
@@ -111,10 +116,75 @@ function renderTextStats(textarea, countElement, readTimeElement, paceElement) {
 
 function updateTextStats() {
   renderTextStats(sourceText, wordCount, readTime, targetPace);
+  renderPracticeChunks();
 }
 
 function updateReaderTextStats() {
   renderTextStats(readerText, readerWordCount, readerReadTime, readerTargetPace);
+}
+
+function splitPracticeText(value, minWords = 5, maxWords = 8) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return [];
+
+  const sentences = normalized.match(/[^.!?]+[.!?]?/g) || [normalized];
+  const chunks = [];
+  let current = [];
+
+  const pushCurrent = () => {
+    if (!current.length) return;
+    chunks.push(current.join(" "));
+    current = [];
+  };
+
+  sentences.forEach((sentence) => {
+    const words = sentence.trim().split(/\s+/).filter(Boolean);
+    words.forEach((word) => {
+      current.push(word);
+      if (current.length >= maxWords) pushCurrent();
+    });
+
+    if (current.length >= minWords) pushCurrent();
+  });
+
+  pushCurrent();
+  return chunks;
+}
+
+function getActivePracticeText() {
+  return practiceChunks[activeChunkIndex] || sourceText.value;
+}
+
+function getAnalysisReferenceText() {
+  return latestAnalysisReferenceText || getActivePracticeText();
+}
+
+function renderPracticeChunks() {
+  const previousText = practiceChunks[activeChunkIndex];
+  practiceChunks = splitPracticeText(sourceText.value);
+  const preservedIndex = previousText ? practiceChunks.indexOf(previousText) : -1;
+  activeChunkIndex =
+    preservedIndex >= 0 ? preservedIndex : Math.min(activeChunkIndex, Math.max(0, practiceChunks.length - 1));
+
+  chunkList.textContent = "";
+  practiceChunks.forEach((chunk, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chunk-button";
+    button.classList.toggle("is-active", index === activeChunkIndex);
+    button.textContent = chunk;
+    button.addEventListener("click", () => {
+      activeChunkIndex = index;
+      renderPracticeChunks();
+      resetPronunciationAnalysis();
+      transcriptText.textContent = `Selected phrase ${index + 1}: ${chunk}`;
+    });
+    chunkList.append(button);
+  });
+
+  chunkSummary.textContent = practiceChunks.length
+    ? `${activeChunkIndex + 1}/${practiceChunks.length} phrase selected`
+    : "No phrase selected";
 }
 
 async function extractTextFromPdf(file) {
@@ -390,7 +460,7 @@ function speakTextFrom(text, controls, displayElement = null) {
 }
 
 function speakText() {
-  speakTextFrom(sourceText.value, { voiceSelect, rateInput, pitchInput });
+  speakTextFrom(getActivePracticeText(), { voiceSelect, rateInput, pitchInput });
 }
 
 function speakReaderText() {
@@ -682,7 +752,7 @@ function applyPhonemeAlignmentToWordAnalysis(alignment) {
         .filter((word) => word.normalized && Number.isFinite(word.start) && Number.isFinite(word.end))
     : [];
 
-  const expectedWords = tokenize(sourceText.value);
+  const expectedWords = tokenize(getAnalysisReferenceText());
   if (!alignmentWords.length || !expectedWords.length) return 0;
 
   const previousRowsByWord = new Map(wordAnalysis.map((row) => [normalizeText(row.expected), row]));
@@ -1404,7 +1474,7 @@ function renderAudioAnalysis(analysis) {
   });
 }
 
-async function transcribeWithSpeechApi(blob) {
+async function transcribeWithSpeechApi(blob, referenceText = getAnalysisReferenceText()) {
   const formData = new FormData();
   formData.append("file", blob, "recording.webm");
   formData.append("model", "whisper-1");
@@ -1412,7 +1482,7 @@ async function transcribeWithSpeechApi(blob) {
   formData.append("response_format", "verbose_json");
   formData.append("timestamp_granularities[]", "word");
 
-  const prompt = cleanSpeechText(sourceText.value).slice(0, 800);
+  const prompt = cleanSpeechText(referenceText).slice(0, 800);
   if (prompt) {
     formData.append("prompt", prompt);
   }
@@ -1471,10 +1541,10 @@ async function transcribeWithLocalAsr(blob) {
   };
 }
 
-async function alignPhonemesWithMfa(blob) {
+async function alignPhonemesWithMfa(blob, referenceText = getAnalysisReferenceText()) {
   const formData = new FormData();
   formData.append("file", blob, "recording.webm");
-  formData.append("referenceText", cleanSpeechText(sourceText.value));
+  formData.append("referenceText", cleanSpeechText(referenceText));
 
   const response = await fetch("./api/phoneme-align", {
     method: "POST",
@@ -1533,12 +1603,12 @@ function renderPhonemeAlignment(alignment) {
   });
 }
 
-async function runPhonemeAlignment(blob) {
+async function runPhonemeAlignment(blob, referenceText = getAnalysisReferenceText()) {
   phonemeAnalysisSummary.textContent = "Running self-hosted MFA phoneme alignment...";
   phonemeAnalysisList.textContent = "";
 
   try {
-    renderPhonemeAlignment(await alignPhonemesWithMfa(blob));
+    renderPhonemeAlignment(await alignPhonemesWithMfa(blob, referenceText));
   } catch (error) {
     latestPhonemeAlignment = null;
     phonemeAnalysisSummary.textContent = "MFA phoneme alignment is not configured on this host.";
@@ -1777,6 +1847,7 @@ function resetPronunciationAnalysis() {
     rebuiltPhraseStatus.textContent = "Record words again to build an updated phrase.";
   }
   wordAnalysis = [];
+  latestAnalysisReferenceText = "";
   latestSpeechWindow = null;
   latestTranscriptionWords = [];
   latestAudioAnalysis = null;
@@ -1817,11 +1888,12 @@ async function runDrillQueue() {
 
 function renderFeedback(durationMs) {
   const durationMinutes = Math.max(durationMs / 60000, 1 / 60);
-  const comparison = compareWords(sourceText.value, transcript);
+  const practiceText = getAnalysisReferenceText();
+  const comparison = compareWords(practiceText, transcript);
   const pace = Math.round(comparison.spokenCount / durationMinutes);
   const coverageScore = Math.round(comparison.coverage * 100);
   const paceScore = scorePace(pace);
-  const analysis = buildWordAnalysis(sourceText.value, transcript, durationMs);
+  const analysis = buildWordAnalysis(practiceText, transcript, durationMs);
   const score = transcript ? Math.round(coverageScore * 0.72 + paceScore * 0.28) : 45;
 
   practiceScore.textContent = score.toString();
@@ -1881,6 +1953,7 @@ async function toggleRecording() {
   mediaRecorder.onstop = async () => {
     const durationMs = Date.now() - recordingStartedAt;
     latestRecordingDurationMs = durationMs;
+    latestAnalysisReferenceText = getActivePracticeText();
     const blob = new Blob(audioChunks, { type: "audio/webm" });
     recordingPlayer.src = URL.createObjectURL(blob);
     recordingPlayer.hidden = false;
@@ -1891,7 +1964,7 @@ async function toggleRecording() {
     renderAudioAnalysis(audioAnalysis);
     latestSpeechWindow = audioAnalysis?.speechWindow || (await detectSpeechWindow(blob));
     const browserTranscript = transcript;
-    const browserScore = scoreTranscriptCandidate(sourceText.value, browserTranscript);
+    const browserScore = scoreTranscriptCandidate(latestAnalysisReferenceText, browserTranscript);
     try {
       drillStatus.textContent = "Transcribing locally with Vosk...";
       const localTranscription = await transcribeWithLocalAsr(blob);
@@ -1907,9 +1980,9 @@ async function toggleRecording() {
     } catch {
       drillStatus.textContent = "Local Vosk ASR unavailable. Trying optional Speech API...";
       try {
-      const apiTranscription = await transcribeWithSpeechApi(blob);
+      const apiTranscription = await transcribeWithSpeechApi(blob, latestAnalysisReferenceText);
       if (apiTranscription.text.trim()) {
-        const apiScore = scoreTranscriptCandidate(sourceText.value, apiTranscription.text);
+        const apiScore = scoreTranscriptCandidate(latestAnalysisReferenceText, apiTranscription.text);
         const apiIsBetter = apiScore >= browserScore + 0.04 || !browserTranscript.trim();
         latestTranscriptionWords = apiTranscription.words;
 
@@ -1934,7 +2007,7 @@ async function toggleRecording() {
     }
     stream.getTracks().forEach((track) => track.stop());
     renderFeedback(durationMs);
-    runPhonemeAlignment(blob);
+    runPhonemeAlignment(blob, latestAnalysisReferenceText);
   };
 
   mediaRecorder.start();
