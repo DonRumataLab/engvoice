@@ -316,6 +316,10 @@ button:focus-visible,
   margin: 18px 0;
 }
 
+.input-panel .control-grid + .field-label {
+  margin-top: 4px;
+}
+
 select,
 input[type="range"] {
   width: 100%;
