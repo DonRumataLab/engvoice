@@ -1226,6 +1226,145 @@ function detectPhonemeIssues(row) {
   return issues.slice(0, 3);
 }
 
+const minimalPairCatalog = [
+  {
+    words: ["ship", "sheep"],
+    focus: "short /I/ vs long /i:/",
+    hint: "Keep ship short and relaxed; make sheep longer and tenser.",
+    issueTypes: ["stress"],
+  },
+  {
+    words: ["bit", "beat"],
+    focus: "short /I/ vs long /i:/",
+    hint: "Bit is short; beat has a longer vowel.",
+    issueTypes: ["stress"],
+  },
+  {
+    words: ["bad", "bed"],
+    focus: "/ae/ vs /e/",
+    hint: "Open the mouth wider for bad; keep bed shorter and flatter.",
+    issueTypes: [],
+  },
+  {
+    words: ["walk", "work"],
+    focus: "/ɔ:/ vs /ɜ:r/",
+    hint: "Walk has an open rounded vowel; work needs the English r-colored vowel.",
+    issueTypes: ["r color"],
+  },
+  {
+    words: ["full", "fool"],
+    focus: "/ʊ/ vs /u:/",
+    hint: "Full is short and relaxed; fool is longer and rounded.",
+    issueTypes: ["stress"],
+  },
+  {
+    words: ["live", "leave"],
+    focus: "short /I/ vs long /i:/",
+    hint: "Live is short; leave is longer and smoother.",
+    issueTypes: [],
+  },
+  {
+    words: ["thin", "sin"],
+    focus: "th vs s",
+    hint: "For thin, put the tongue lightly between the teeth; sin keeps the tongue behind the teeth.",
+    issueTypes: ["weak th"],
+  },
+  {
+    words: ["then", "den"],
+    focus: "voiced th vs d",
+    hint: "Then starts with voiced th; den starts with a clear d stop.",
+    issueTypes: ["weak th"],
+  },
+  {
+    words: ["vine", "wine"],
+    focus: "v vs w",
+    hint: "V uses teeth on the lower lip; w starts with rounded lips.",
+    issueTypes: ["v/w"],
+  },
+  {
+    words: ["vest", "west"],
+    focus: "v vs w",
+    hint: "Bite the lower lip lightly for vest; round the lips for west.",
+    issueTypes: ["v/w"],
+  },
+  {
+    words: ["right", "light"],
+    focus: "r vs l",
+    hint: "Right uses English r without rolling; light touches the ridge behind the teeth.",
+    issueTypes: ["r color"],
+  },
+  {
+    words: ["back", "bag"],
+    focus: "final k vs final g",
+    hint: "Finish the last consonant clearly; k is voiceless, g is voiced.",
+    issueTypes: ["final consonant"],
+  },
+  {
+    words: ["cap", "cab"],
+    focus: "final p vs final b",
+    hint: "Close the lips for the final consonant; b stays voiced.",
+    issueTypes: ["final consonant"],
+  },
+];
+
+function getMinimalPairExercise(row) {
+  const expected = normalizeText(row.expected);
+  const spoken = normalizeText(row.spoken);
+  const issueTypes = new Set((row.phonemeIssues || []).map((issue) => issue.type));
+
+  return (
+    minimalPairCatalog.find((pair) => pair.words.includes(expected) || pair.words.includes(spoken)) ||
+    minimalPairCatalog.find((pair) => pair.issueTypes.some((issueType) => issueTypes.has(issueType))) ||
+    null
+  );
+}
+
+async function speakMinimalPair(pair) {
+  for (const word of pair.words) {
+    await speakModelWord(word, 0.84);
+    await new Promise((resolve) => window.setTimeout(resolve, 260));
+  }
+}
+
+function createMinimalPairExercise(row) {
+  const pair = getMinimalPairExercise(row);
+  if (!pair) return null;
+
+  const exercise = document.createElement("div");
+  exercise.className = "minimal-pair-exercise";
+
+  const title = document.createElement("strong");
+  title.textContent = `Minimal pair: ${(pair.labels || pair.words).join(" / ")}`;
+
+  const hint = document.createElement("small");
+  hint.textContent = `${pair.focus}. ${pair.hint}`;
+
+  const actions = document.createElement("div");
+  actions.className = "minimal-pair-actions";
+  pair.words.forEach((word, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = pair.labels?.[index] || word;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      speakModelWord(word, 0.84);
+    });
+    actions.append(button);
+  });
+
+  const contrastButton = document.createElement("button");
+  contrastButton.type = "button";
+  contrastButton.textContent = "Contrast";
+  contrastButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    speakMinimalPair(pair);
+  });
+  actions.append(contrastButton);
+
+  exercise.append(title, hint, actions);
+  return exercise;
+}
+
 function createPhonemeIssueList(row) {
   const issues = row.phonemeIssues || [];
   if (!issues.length) return null;
@@ -1292,6 +1431,10 @@ function renderWordAnalysis(analysis) {
     wordBlock.append(expected, heard);
     const phonemeIssues = createPhonemeIssueList(row);
     if (phonemeIssues) wordBlock.append(phonemeIssues);
+    const minimalPairExercise = createMinimalPairExercise(row);
+    if (minimalPairExercise && (row.needsDrill || row.phonemeIssues?.length)) {
+      wordBlock.append(minimalPairExercise);
+    }
     card.append(wordBlock);
 
     [
@@ -1340,6 +1483,7 @@ function createDrillCard(row) {
   const timing = document.createElement("small");
   timing.textContent = formatRowTiming(row);
   const phonemeIssues = createPhonemeIssueList(row);
+  const minimalPairExercise = createMinimalPairExercise(row);
 
   const status = document.createElement("span");
   status.className = `drill-status-badge ${row.needsDrill ? "needs-drill" : "is-clear"}`;
@@ -1347,6 +1491,7 @@ function createDrillCard(row) {
 
   main.append(word, status, phonetic, heard, timing);
   if (phonemeIssues) main.append(phonemeIssues);
+  if (minimalPairExercise) main.append(minimalPairExercise);
 
   const score = document.createElement("span");
   score.className = `drill-score ${metricClass(row.pronunciation)}`;

@@ -647,6 +647,36 @@ input[type="range"] {
   line-height: 1.35;
 }
 
+.minimal-pair-exercise {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid rgba(28, 117, 101, 0.2);
+  border-radius: 8px;
+  background: rgba(234, 246, 241, 0.72);
+}
+
+.minimal-pair-exercise strong {
+  font-size: 0.82rem;
+}
+
+.minimal-pair-exercise small {
+  line-height: 1.35;
+}
+
+.minimal-pair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.minimal-pair-actions button {
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 0.78rem;
+}
+
 .drill-word-list {
   display: grid;
   gap: 10px;
