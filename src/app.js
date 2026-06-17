@@ -662,34 +662,75 @@ function applyPhonemeAlignmentToWordAnalysis(alignment) {
         .filter((word) => word.normalized && Number.isFinite(word.start) && Number.isFinite(word.end))
     : [];
 
-  if (!alignmentWords.length || !wordAnalysis.length) return 0;
+  const expectedWords = tokenize(sourceText.value);
+  if (!alignmentWords.length || !expectedWords.length) return 0;
 
-  const expected = wordAnalysis.map((row) => normalizeText(row.expected));
-  const aligned = alignWords(
-    expected,
-    alignmentWords.map((word) => word.normalized),
-  );
+  const previousRowsByWord = new Map(wordAnalysis.map((row) => [normalizeText(row.expected), row]));
+  const nextRows = [];
   let updated = 0;
 
-  aligned.forEach((item, index) => {
-    if (item.spokenIndex < 0 || !wordAnalysis[index]) return;
+  expectedWords.forEach((expected, index) => {
+    const alignmentWord = alignmentWords[index];
+    const timing = getAlignmentWordTiming(alignmentWord, index, alignmentWords);
+    const previousRow = previousRowsByWord.get(expected) || wordAnalysis[index];
+    const spoken = alignmentWord?.normalized || previousRow?.spoken || "aligned";
+    const similarity = wordSimilarity(expected, spoken);
+    const accuracy = Math.round(similarity * 100);
 
-    const alignmentWord = alignmentWords[item.spokenIndex];
-    const timing = getAlignmentWordTiming(alignmentWord, item.spokenIndex, alignmentWords);
-    if (!timing) return;
+    if (timing) updated += 1;
 
-    wordAnalysis[index] = {
-      ...wordAnalysis[index],
-      startTime: timing.start,
-      endTime: timing.end,
-      timingSource: "MFA alignment",
-      phonemes: alignmentWord.phonemes || [],
-    };
-    updated += 1;
+    nextRows.push({
+      id: index,
+      expected,
+      spoken,
+      spokenIndex: index,
+      startTime: timing?.start ?? previousRow?.startTime ?? null,
+      endTime: timing?.end ?? previousRow?.endTime ?? null,
+      pace: previousRow?.pace ?? 100,
+      pronunciation: previousRow?.pronunciation ?? accuracy,
+      accuracy: previousRow?.accuracy ?? accuracy,
+      fluency: previousRow?.fluency ?? 100,
+      timingSource: timing ? "MFA direct timing" : "MFA missing timing",
+      needsDrill: previousRow?.needsDrill ?? false,
+      phonemes: alignmentWord?.phonemes || [],
+    });
   });
 
+  if (alignmentWords.length > expectedWords.length) {
+    alignmentWords.slice(expectedWords.length).forEach((alignmentWord, extraIndex) => {
+      const index = expectedWords.length + extraIndex;
+      const timing = getAlignmentWordTiming(alignmentWord, index, alignmentWords);
+      if (timing) updated += 1;
+
+      nextRows.push({
+        id: index,
+        expected: alignmentWord.normalized,
+        spoken: alignmentWord.normalized,
+        spokenIndex: index,
+        startTime: timing?.start ?? null,
+        endTime: timing?.end ?? null,
+        pace: 100,
+        pronunciation: 100,
+        accuracy: 100,
+        fluency: 100,
+        timingSource: timing ? "MFA direct timing" : "MFA missing timing",
+        needsDrill: false,
+        phonemes: alignmentWord.phonemes || [],
+      });
+    });
+  }
+
+  wordAnalysis = nextRows;
   renderWordAnalysis({ rows: wordAnalysis });
   return updated;
+}
+
+function formatRowTiming(row) {
+  if (!Number.isFinite(row.startTime) || !Number.isFinite(row.endTime)) {
+    return row.timingSource;
+  }
+
+  return `${row.timingSource}: ${row.startTime.toFixed(2)}-${row.endTime.toFixed(2)}s`;
 }
 
 function buildWordAnalysis(expectedText, spokenText, durationMs) {
@@ -898,7 +939,7 @@ function createDrillCard(row) {
   heard.textContent = `heard: ${row.spoken}`;
 
   const timing = document.createElement("small");
-  timing.textContent = row.timingSource;
+  timing.textContent = formatRowTiming(row);
 
   const status = document.createElement("span");
   status.className = `drill-status-badge ${row.needsDrill ? "needs-drill" : "is-clear"}`;
