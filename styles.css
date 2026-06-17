@@ -145,6 +145,14 @@ button:disabled {
   gap: 18px;
 }
 
+.pronunciation-workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pronunciation-workspace textarea {
+  min-height: 190px;
+}
+
 .panel {
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(217, 225, 222, 0.9);

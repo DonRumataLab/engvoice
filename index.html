@@ -18,83 +18,16 @@
         </header>
 
         <nav class="screen-tabs" aria-label="App screens">
-          <button id="readerTab" class="tab-btn is-active" type="button" data-screen="readerScreen">
-            Book Reader
-          </button>
-          <button id="practiceTab" class="tab-btn" type="button" data-screen="practiceScreen">
+          <button id="practiceTab" class="tab-btn is-active" type="button" data-screen="practiceScreen">
             Pronunciation Check
+          </button>
+          <button id="readerTab" class="tab-btn" type="button" data-screen="readerScreen">
+            Book Reader
           </button>
         </nav>
 
-        <section id="readerScreen" class="screen is-active" aria-label="Book reader">
-          <div class="workspace">
-            <aside class="panel input-panel">
-              <div class="section-title">
-                <p class="eyebrow">Reader</p>
-                <h2>Load a book or paste text</h2>
-              </div>
-
-              <label class="field-label" for="readerText">Text to read</label>
-              <textarea
-                id="readerText"
-                spellcheck="false"
-                placeholder="Paste English text here, or upload a readable file."
-              >The quick brown fox jumps over the lazy dog. Practice slowly first, then try to sound natural.</textarea>
-
-              <div class="file-row">
-                <label class="file-button" for="readerFileInput">Upload file</label>
-                <input id="readerFileInput" type="file" />
-                <span id="readerFileName" class="muted">Readable files and PDF</span>
-              </div>
-
-              <div class="metrics-grid" aria-label="Reader text metrics">
-                <div>
-                  <span id="readerWordCount">0</span>
-                  <small>words</small>
-                </div>
-                <div>
-                  <span id="readerReadTime">0:00</span>
-                  <small>reading</small>
-                </div>
-                <div>
-                  <span id="readerTargetPace">120</span>
-                  <small>wpm</small>
-                </div>
-              </div>
-            </aside>
-
-            <section class="panel practice-panel">
-              <div class="toolbar" aria-label="Reader text to speech controls">
-                <button id="readerSpeakBtn" class="primary-btn" type="button">Play text</button>
-                <button id="readerPauseBtn" type="button">Pause</button>
-                <button id="readerStopBtn" type="button">Stop</button>
-              </div>
-
-              <div class="control-grid">
-                <label>
-                  Voice
-                  <select id="readerVoiceSelect"></select>
-                </label>
-                <label>
-                  Speed
-                  <input id="readerRateInput" type="range" min="0.65" max="1.25" value="0.95" step="0.05" />
-                </label>
-                <label>
-                  Pitch
-                  <input id="readerPitchInput" type="range" min="0.7" max="1.3" value="1" step="0.05" />
-                </label>
-              </div>
-
-              <section class="current-reading-panel" aria-label="Current reading text">
-                <span class="score-label">Now reading</span>
-                <p id="readerCurrentText" class="current-reading-text">Start playback to see the current phrase.</p>
-              </section>
-            </section>
-          </div>
-        </section>
-
-        <section id="practiceScreen" class="screen" aria-label="Pronunciation checker">
-          <div class="workspace">
+        <section id="practiceScreen" class="screen is-active" aria-label="Pronunciation checker">
+          <div class="workspace pronunciation-workspace">
             <aside class="panel input-panel">
               <div class="section-title">
                 <p class="eyebrow">Pronunciation</p>
@@ -265,6 +198,73 @@
                   Record speech to build a correction drill from missed or unclear words.
                 </p>
                 <div id="drillWordList" class="drill-word-list"></div>
+              </section>
+            </section>
+          </div>
+        </section>
+
+        <section id="readerScreen" class="screen" aria-label="Book reader">
+          <div class="workspace">
+            <aside class="panel input-panel">
+              <div class="section-title">
+                <p class="eyebrow">Reader</p>
+                <h2>Load a book or paste text</h2>
+              </div>
+
+              <label class="field-label" for="readerText">Text to read</label>
+              <textarea
+                id="readerText"
+                spellcheck="false"
+                placeholder="Paste English text here, or upload a readable file."
+              >The quick brown fox jumps over the lazy dog. Practice slowly first, then try to sound natural.</textarea>
+
+              <div class="file-row">
+                <label class="file-button" for="readerFileInput">Upload file</label>
+                <input id="readerFileInput" type="file" />
+                <span id="readerFileName" class="muted">Readable files and PDF</span>
+              </div>
+
+              <div class="metrics-grid" aria-label="Reader text metrics">
+                <div>
+                  <span id="readerWordCount">0</span>
+                  <small>words</small>
+                </div>
+                <div>
+                  <span id="readerReadTime">0:00</span>
+                  <small>reading</small>
+                </div>
+                <div>
+                  <span id="readerTargetPace">120</span>
+                  <small>wpm</small>
+                </div>
+              </div>
+            </aside>
+
+            <section class="panel practice-panel">
+              <div class="toolbar" aria-label="Reader text to speech controls">
+                <button id="readerSpeakBtn" class="primary-btn" type="button">Play text</button>
+                <button id="readerPauseBtn" type="button">Pause</button>
+                <button id="readerStopBtn" type="button">Stop</button>
+              </div>
+
+              <div class="control-grid">
+                <label>
+                  Voice
+                  <select id="readerVoiceSelect"></select>
+                </label>
+                <label>
+                  Speed
+                  <input id="readerRateInput" type="range" min="0.65" max="1.25" value="0.95" step="0.05" />
+                </label>
+                <label>
+                  Pitch
+                  <input id="readerPitchInput" type="range" min="0.7" max="1.3" value="1" step="0.05" />
+                </label>
+              </div>
+
+              <section class="current-reading-panel" aria-label="Current reading text">
+                <span class="score-label">Now reading</span>
+                <p id="readerCurrentText" class="current-reading-text">Start playback to see the current phrase.</p>
               </section>
             </section>
           </div>
