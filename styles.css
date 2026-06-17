@@ -647,6 +647,17 @@ input[type="range"] {
   line-height: 1.35;
 }
 
+.phrase-stress-badge {
+  width: fit-content;
+  margin-top: 6px;
+  border-radius: 999px;
+  padding: 4px 7px;
+  font-size: 0.72rem;
+  font-weight: 850;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
 .minimal-pair-exercise {
   display: grid;
   gap: 6px;

@@ -57,6 +57,9 @@ const pauseMetric = document.querySelector("#pauseMetric");
 const volumeMetric = document.querySelector("#volumeMetric");
 const stabilityMetric = document.querySelector("#stabilityMetric");
 const clippingMetric = document.querySelector("#clippingMetric");
+const pitchRangeMetric = document.querySelector("#pitchRangeMetric");
+const endingToneMetric = document.querySelector("#endingToneMetric");
+const rhythmMetric = document.querySelector("#rhythmMetric");
 const audioAnalysisTips = document.querySelector("#audioAnalysisTips");
 const phonemeAnalysisSummary = document.querySelector("#phonemeAnalysisSummary");
 const phonemeAnalysisList = document.querySelector("#phonemeAnalysisList");
@@ -1395,8 +1398,43 @@ function scoreRetryWord(expected, spoken) {
   };
 }
 
+function getWordEnergy(row) {
+  if (
+    !latestRecordingAudioBuffer ||
+    !Number.isFinite(row.startTime) ||
+    !Number.isFinite(row.endTime) ||
+    row.endTime <= row.startTime
+  ) {
+    return 0;
+  }
+
+  const channel = latestRecordingAudioBuffer.getChannelData(0);
+  const sampleRate = latestRecordingAudioBuffer.sampleRate;
+  const start = Math.max(0, Math.floor(row.startTime * sampleRate));
+  const end = Math.min(channel.length, Math.ceil(row.endTime * sampleRate));
+  let sum = 0;
+
+  for (let index = start; index < end; index += 1) {
+    sum += channel[index] * channel[index];
+  }
+
+  return Math.sqrt(sum / Math.max(1, end - start));
+}
+
+function getPhraseStressWordId(rows) {
+  const candidates = rows
+    .filter((row) => Number.isFinite(row.startTime) && Number.isFinite(row.endTime))
+    .map((row) => ({ row, energy: getWordEnergy(row) }))
+    .filter((item) => item.energy > 0);
+  if (!candidates.length) return null;
+
+  const strongest = candidates.sort((a, b) => b.energy - a.energy)[0];
+  return strongest.row.id;
+}
+
 function renderWordAnalysis(analysis) {
   wordAnalysis = analysis.rows;
+  const phraseStressWordId = getPhraseStressWordId(wordAnalysis);
   if (!wordAnalysis.some((row) => row.id === selectedWaveformWordId)) {
     selectedWaveformWordId = wordAnalysis[0]?.id ?? null;
   }
@@ -1429,6 +1467,12 @@ function renderWordAnalysis(analysis) {
     const heard = document.createElement("small");
     heard.textContent = `heard: ${row.spoken}`;
     wordBlock.append(expected, heard);
+    if (row.id === phraseStressWordId) {
+      const stressBadge = document.createElement("span");
+      stressBadge.className = "phrase-stress-badge";
+      stressBadge.textContent = "phrase stress";
+      wordBlock.append(stressBadge);
+    }
     const phonemeIssues = createPhonemeIssueList(row);
     if (phonemeIssues) wordBlock.append(phonemeIssues);
     const minimalPairExercise = createMinimalPairExercise(row);
@@ -1788,6 +1832,124 @@ async function detectSpeechWindow(blob) {
   }
 }
 
+function estimateFramePitch(channel, start, end, sampleRate) {
+  const length = end - start;
+  if (length < 64) return null;
+
+  let rms = 0;
+  for (let index = start; index < end; index += 1) {
+    rms += channel[index] * channel[index];
+  }
+  rms = Math.sqrt(rms / length);
+  if (rms < 0.012) return null;
+
+  const minLag = Math.floor(sampleRate / 420);
+  const maxLag = Math.min(Math.floor(sampleRate / 75), Math.floor(length * 0.82));
+  let bestLag = 0;
+  let bestCorrelation = 0;
+
+  for (let lag = minLag; lag <= maxLag; lag += 1) {
+    let correlation = 0;
+    let energyA = 0;
+    let energyB = 0;
+    const limit = length - lag;
+
+    for (let offset = 0; offset < limit; offset += 1) {
+      const a = channel[start + offset];
+      const b = channel[start + offset + lag];
+      correlation += a * b;
+      energyA += a * a;
+      energyB += b * b;
+    }
+
+    const normalized = correlation / Math.sqrt(Math.max(energyA * energyB, 1e-9));
+    if (normalized > bestCorrelation) {
+      bestCorrelation = normalized;
+      bestLag = lag;
+    }
+  }
+
+  if (!bestLag || bestCorrelation < 0.48) return null;
+  return sampleRate / bestLag;
+}
+
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function analyzePitchContour(frames, channel, sampleRate, speechWindow) {
+  const voicedFrames = frames
+    .filter((frame) => !speechWindow || (frame.start >= speechWindow.start && frame.end <= speechWindow.end))
+    .map((frame) => {
+      const start = Math.floor(frame.start * sampleRate);
+      const end = Math.min(channel.length, Math.floor(frame.end * sampleRate));
+      return {
+        ...frame,
+        pitch: estimateFramePitch(channel, start, end, sampleRate),
+      };
+    })
+    .filter((frame) => Number.isFinite(frame.pitch));
+
+  if (voicedFrames.length < 4) {
+    return {
+      contour: "limited",
+      ending: "unknown",
+      rangeSemitones: 0,
+      rhythmScore: 0,
+      pitchPoints: voicedFrames,
+    };
+  }
+
+  const pitches = voicedFrames.map((frame) => frame.pitch);
+  const centerPitch = median(pitches);
+  const filtered = voicedFrames.filter(
+    (frame) => frame.pitch >= centerPitch * 0.55 && frame.pitch <= centerPitch * 1.75,
+  );
+  const usable = filtered.length >= 4 ? filtered : voicedFrames;
+  const usablePitches = usable.map((frame) => frame.pitch);
+  const lowPitch = Math.min(...usablePitches);
+  const highPitch = Math.max(...usablePitches);
+  const rangeSemitones = Math.round(12 * Math.log2(highPitch / Math.max(lowPitch, 1)));
+  const splitIndex = Math.max(1, Math.floor(usable.length * 0.7));
+  const earlyPitch = median(usable.slice(0, Math.max(1, Math.floor(usable.length * 0.3))).map((frame) => frame.pitch));
+  const latePitch = median(usable.slice(splitIndex).map((frame) => frame.pitch));
+  const endingChangeSemitones = 12 * Math.log2(latePitch / Math.max(earlyPitch, 1));
+  const ending =
+    endingChangeSemitones > 1.6
+      ? "rising"
+      : endingChangeSemitones < -1.6
+        ? "falling"
+        : "flat";
+
+  let pitchJumps = 0;
+  let totalStep = 0;
+  for (let index = 1; index < usable.length; index += 1) {
+    const step = Math.abs(12 * Math.log2(usable[index].pitch / Math.max(usable[index - 1].pitch, 1)));
+    totalStep += step;
+    if (step > 3.2) pitchJumps += 1;
+  }
+  const averageStep = totalStep / Math.max(1, usable.length - 1);
+  const rhythmScore = Math.max(0, Math.min(100, Math.round(100 - averageStep * 18 - pitchJumps * 5)));
+  const contour =
+    rangeSemitones < 3
+      ? "flat"
+      : pitchJumps >= Math.max(3, usable.length * 0.18)
+        ? "choppy"
+        : "varied";
+
+  return {
+    contour,
+    ending,
+    endingChangeSemitones,
+    rangeSemitones,
+    rhythmScore,
+    pitchPoints: usable,
+  };
+}
+
 async function analyzeAudioSignal(blob) {
   try {
     const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
@@ -1863,6 +2025,7 @@ async function analyzeAudioSignal(blob) {
             end: Math.min(duration, frames[lastActive].end + 0.16),
           }
         : null;
+    const pitchAnalysis = analyzePitchContour(frames, channel, sampleRate, speechWindow);
 
     await audioContext.close();
 
@@ -1878,6 +2041,7 @@ async function analyzeAudioSignal(blob) {
       speechWindow,
       stability: Math.round(stability),
       voiceTime,
+      ...pitchAnalysis,
     };
   } catch {
     return null;
@@ -1895,6 +2059,8 @@ function renderAudioAnalysis(analysis) {
   const silencePercent = Math.round(analysis.silenceRatio * 100);
   const clippingPercent = Math.round(analysis.clippingRatio * 1000) / 10;
   const volumePercent = Math.round(Math.min(100, analysis.averageRms * 420));
+  const referenceText = getAnalysisReferenceText();
+  const expectsQuestionTone = /\?\s*$/.test(referenceText.trim());
   const tips = [];
 
   voiceTimeMetric.textContent = `${analysis.voiceTime.toFixed(1)}s`;
@@ -1903,7 +2069,10 @@ function renderAudioAnalysis(analysis) {
   volumeMetric.textContent = `${volumePercent}%`;
   stabilityMetric.textContent = `${analysis.stability}%`;
   clippingMetric.textContent = `${clippingPercent}%`;
-  audioAnalysisSummary.textContent = `Local signal score: ${analysis.signalScore}/100`;
+  pitchRangeMetric.textContent = analysis.rangeSemitones ? `${analysis.rangeSemitones} st` : "--";
+  endingToneMetric.textContent = analysis.ending || "--";
+  rhythmMetric.textContent = analysis.rhythmScore ? `${analysis.rhythmScore}%` : "--";
+  audioAnalysisSummary.textContent = `Local signal score: ${analysis.signalScore}/100. Intonation: ${analysis.contour}.`;
 
   if (volumePercent < 18) {
     tips.push("Move closer to the microphone or speak a little louder.");
@@ -1923,6 +2092,30 @@ function renderAudioAnalysis(analysis) {
 
   if (analysis.stability < 55) {
     tips.push("Volume is uneven. Keep a steadier distance from the microphone.");
+  }
+
+  if (analysis.contour === "limited") {
+    tips.push("Pitch contour is hard to read. Speak a little louder and keep the phrase connected.");
+  } else {
+    if (expectsQuestionTone && analysis.ending === "falling") {
+      tips.push("This looks like a question, but the ending falls. Try a gentle rise on the final key word.");
+    }
+
+    if (!expectsQuestionTone && analysis.ending === "rising") {
+      tips.push("The ending rises like a question. For statements, let the final tone fall more confidently.");
+    }
+
+    if (analysis.contour === "flat") {
+      tips.push("Intonation is very flat. Add pitch movement on the main content words.");
+    }
+
+    if (analysis.contour === "choppy" || analysis.rhythmScore < 55) {
+      tips.push("Pitch movement is choppy. Link words into smoother thought groups.");
+    }
+
+    if (analysis.rangeSemitones > 0 && analysis.rangeSemitones < 4) {
+      tips.push("Pitch range is narrow. Make stressed words slightly higher or longer.");
+    }
   }
 
   if (!tips.length) {
@@ -2336,6 +2529,9 @@ function resetPronunciationAnalysis() {
   volumeMetric.textContent = "--";
   stabilityMetric.textContent = "--";
   clippingMetric.textContent = "--";
+  pitchRangeMetric.textContent = "--";
+  endingToneMetric.textContent = "--";
+  rhythmMetric.textContent = "--";
   audioAnalysisSummary.textContent = "Recording new audio sample...";
   audioAnalysisTips.textContent = "";
   phonemeAnalysisSummary.textContent = "Waiting for recording...";
