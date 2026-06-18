@@ -1554,6 +1554,8 @@ function createDrillCard(row) {
   [
     ["Your + model", () => runDrillForWord(row)],
     ["New + model", () => runNewDrillForWord(row)],
+    ["Your context + model", () => runContextDrillForWord(row)],
+    ["New context + model", () => runContextDrillForWord(row, true)],
     ["Normal model", () => speakModelWord(row.expected, 0.95)],
     ["Record again", () => recordWordRetry(row, card)],
   ].forEach(([label, handler]) => {
@@ -1641,6 +1643,24 @@ function playBufferedRecordingSegment(startTime, endTime) {
       source.start(0, start, segmentDuration);
       window.setTimeout(finish, Math.ceil(segmentDuration * 1000) + 120);
     });
+  });
+}
+
+function playAudioBuffer(audioBuffer) {
+  if (!audioBuffer || !recordingAudioContext) return Promise.resolve(false);
+
+  stopActiveRecordingSegment();
+  const source = recordingAudioContext.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(recordingAudioContext.destination);
+  activeSegmentSource = source;
+
+  return new Promise((resolve) => {
+    source.onended = () => {
+      if (activeSegmentSource === source) activeSegmentSource = null;
+      resolve(true);
+    };
+    recordingAudioContext.resume().then(() => source.start());
   });
 }
 
@@ -1740,6 +1760,27 @@ function concatenateAudioBuffers(buffers) {
   });
 
   return output;
+}
+
+function getContextRows(row) {
+  const rowIndex = wordAnalysis.findIndex((item) => item.id === row.id);
+  if (rowIndex < 0) return [row];
+  return wordAnalysis.slice(Math.max(0, rowIndex - 1), Math.min(wordAnalysis.length, rowIndex + 2));
+}
+
+function createContextBuffer(row, useReplacement = false) {
+  if (!latestRecordingAudioBuffer || !recordingAudioContext) return null;
+
+  const contextRows = getContextRows(row);
+  const buffers = contextRows.map((contextRow) => {
+    if (useReplacement && contextRow.id === row.id && row.replacementAudioBuffer) {
+      return row.replacementAudioBuffer;
+    }
+    if (!Number.isFinite(contextRow.startTime) || !Number.isFinite(contextRow.endTime)) return null;
+    return createBufferFromSegment(latestRecordingAudioBuffer, contextRow.startTime, contextRow.endTime);
+  });
+
+  return concatenateAudioBuffers(buffers);
 }
 
 function updateRebuiltPhrasePlayer() {
@@ -2472,17 +2513,27 @@ async function runNewDrillForWord(row) {
   }
 
   drillStatus.textContent = `New segment: ${row.spoken}. Model: ${row.expected}.`;
-  const source = recordingAudioContext.createBufferSource();
-  source.buffer = row.replacementAudioBuffer;
-  source.connect(recordingAudioContext.destination);
-  stopActiveRecordingSegment();
-  activeSegmentSource = source;
+  await playAudioBuffer(row.replacementAudioBuffer);
+  await new Promise((resolve) => window.setTimeout(resolve, 220));
+  await speakModelWord(row.expected);
+}
 
-  await new Promise((resolve) => {
-    source.onended = resolve;
-    recordingAudioContext.resume().then(() => source.start());
-  });
-  activeSegmentSource = null;
+async function runContextDrillForWord(row, useReplacement = false) {
+  if (useReplacement && !row.replacementAudioBuffer) {
+    drillStatus.textContent = `No new recording for "${row.expected}" yet. Use Record again first.`;
+    return;
+  }
+
+  const contextRows = getContextRows(row);
+  const contextText = contextRows.map((item) => item.expected).join(" ");
+  const contextBuffer = createContextBuffer(row, useReplacement);
+  if (!contextBuffer) {
+    drillStatus.textContent = `Could not build context for "${row.expected}".`;
+    return;
+  }
+
+  drillStatus.textContent = `${useReplacement ? "New context" : "Your context"}: ${contextText}. Model: ${row.expected}.`;
+  await playAudioBuffer(contextBuffer);
   await new Promise((resolve) => window.setTimeout(resolve, 220));
   await speakModelWord(row.expected);
 }
