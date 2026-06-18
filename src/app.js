@@ -104,6 +104,8 @@ let speechQueueIndex = 0;
 let speechStopped = false;
 let speechDisplay = null;
 let speechFallbackTimer = null;
+let activePracticeTab = "overview";
+let waveformNeedsRedraw = false;
 
 function normalizeText(value) {
   return value
@@ -889,7 +891,21 @@ function selectWaveformWord(rowId) {
     card.classList.toggle("is-selected", Number(card.dataset.wordId) === rowId);
   });
   updateWaveformSelectionText();
-  drawWaveform();
+  scheduleWaveformDraw();
+}
+
+function isWaveformVisible() {
+  return activePracticeTab === "waveform" && waveformCanvas?.offsetParent !== null;
+}
+
+function scheduleWaveformDraw() {
+  waveformNeedsRedraw = true;
+  if (!isWaveformVisible()) return;
+
+  window.requestAnimationFrame(() => {
+    waveformNeedsRedraw = false;
+    drawWaveform();
+  });
 }
 
 function drawWaveform() {
@@ -1543,7 +1559,7 @@ function renderWordAnalysis(analysis) {
   visibleDrillRows.forEach((row) => {
     drillWordList.append(createDrillCard(row));
   });
-  drawWaveform();
+  scheduleWaveformDraw();
   updateRebuiltPhrasePlayer();
 }
 
@@ -1641,10 +1657,10 @@ async function prepareRecordingAudioBuffer(blob) {
 
     recordingAudioContext = new AudioContextConstructor();
     latestRecordingAudioBuffer = await recordingAudioContext.decodeAudioData(await blob.arrayBuffer());
-    drawWaveform();
+    scheduleWaveformDraw();
   } catch {
     latestRecordingAudioBuffer = null;
-    drawWaveform();
+    scheduleWaveformDraw();
   }
 }
 
@@ -2210,7 +2226,7 @@ function renderAudioAnalysis(analysis) {
     item.textContent = tip;
     audioAnalysisTips.append(item);
   });
-  drawWaveform();
+  scheduleWaveformDraw();
 }
 
 async function transcribeWithSpeechApi(blob, referenceText = getAnalysisReferenceText()) {
@@ -2631,7 +2647,7 @@ function resetPronunciationAnalysis() {
   phonemeAnalysisList.textContent = "";
   wordAnalysisList.textContent = "";
   drillWordList.textContent = "";
-  drawWaveform();
+  scheduleWaveformDraw();
   wordAnalysisSummary.textContent = "Record speech to see word scores.";
   drillStatus.textContent = "Recording new attempt...";
   startDrillBtn.disabled = true;
@@ -2813,6 +2829,7 @@ function activateScreen(screenId) {
 }
 
 function activatePracticeTab(tabId) {
+  activePracticeTab = tabId;
   practiceSubtabs.forEach((button) => {
     button.classList.toggle("is-active", button.dataset.practiceTab === tabId);
   });
@@ -2822,7 +2839,11 @@ function activatePracticeTab(tabId) {
   });
 
   if (tabId === "waveform") {
-    window.requestAnimationFrame(drawWaveform);
+    waveformNeedsRedraw = true;
+    window.requestAnimationFrame(() => {
+      waveformNeedsRedraw = false;
+      drawWaveform();
+    });
   }
 }
 
@@ -2944,7 +2965,7 @@ wavePlayBtn.addEventListener("click", async () => {
   if (!row) return;
   await runDrillForWord(row);
 });
-window.addEventListener("resize", drawWaveform);
+window.addEventListener("resize", scheduleWaveformDraw);
 
 if (window.speechSynthesis) {
   loadVoices();
@@ -2954,4 +2975,4 @@ if (window.speechSynthesis) {
 updateTextStats();
 updateReaderTextStats();
 updateSupportStatus();
-drawWaveform();
+scheduleWaveformDraw();
