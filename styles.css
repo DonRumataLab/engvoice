@@ -426,6 +426,39 @@ input[type="range"] {
   font-weight: 800;
 }
 
+.practice-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.practice-subtab {
+  min-height: 36px;
+  padding: 8px 12px;
+  border-color: transparent;
+}
+
+.practice-subtab.is-active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+[data-practice-panel] {
+  display: none !important;
+}
+
+[data-practice-panel].is-active {
+  display: block !important;
+}
+
+.analysis-layout[data-practice-panel].is-active,
+.speech-metrics-grid[data-practice-panel].is-active,
+.waveform-panel[data-practice-panel].is-active {
+  display: grid !important;
+}
+
 .analysis-layout {
   display: grid;
   grid-template-columns: 0.75fr 1.25fr;

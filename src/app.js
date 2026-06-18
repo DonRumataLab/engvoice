@@ -1,5 +1,7 @@
 const tabButtons = document.querySelectorAll(".tab-btn");
 const screens = document.querySelectorAll(".screen");
+const practiceSubtabs = document.querySelectorAll(".practice-subtab");
+const practicePanels = document.querySelectorAll("[data-practice-panel]");
 const appScriptUrl = new URL(document.currentScript?.src || "./src/app.js", document.baseURI);
 const readerText = document.querySelector("#readerText");
 const readerFileInput = document.querySelector("#readerFileInput");
@@ -938,6 +940,7 @@ function drawWaveform() {
   }
   context.stroke();
 
+  const phraseStressWordId = getPhraseStressWordId(wordAnalysis);
   wordAnalysis.forEach((row) => {
     if (!Number.isFinite(row.startTime) || !Number.isFinite(row.endTime)) return;
 
@@ -955,6 +958,13 @@ function drawWaveform() {
     context.lineTo(endX, height);
     context.stroke();
 
+    if (row.id === phraseStressWordId) {
+      context.fillStyle = "#b8870b";
+      context.fillRect(startX, 0, endX - startX, 4);
+      context.font = "12px system-ui, sans-serif";
+      context.fillText("stress", startX + 4, height - 8);
+    }
+
     if (endX - startX > 34) {
       context.fillStyle = isSelected ? "#12312c" : "#44504c";
       context.font = "12px system-ui, sans-serif";
@@ -962,8 +972,32 @@ function drawWaveform() {
     }
   });
 
+  const pitchPoints = latestAudioAnalysis?.pitchPoints || [];
+  if (pitchPoints.length >= 3) {
+    const pitchValues = pitchPoints.map((point) => point.pitch).filter((pitch) => Number.isFinite(pitch));
+    const lowPitch = Math.min(...pitchValues);
+    const highPitch = Math.max(...pitchValues);
+    const pitchRange = Math.max(1, highPitch - lowPitch);
+
+    context.strokeStyle = "#d49a00";
+    context.lineWidth = 2;
+    context.beginPath();
+    pitchPoints.forEach((point, index) => {
+      const x = Math.max(0, Math.min(width, (((point.start + point.end) / 2) / duration) * width));
+      const normalizedPitch = (point.pitch - lowPitch) / pitchRange;
+      const y = height - 18 - normalizedPitch * (height - 36);
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.stroke();
+
+    context.fillStyle = "#7b6116";
+    context.font = "12px system-ui, sans-serif";
+    context.fillText("pitch contour", 12, height - 8);
+  }
+
   waveformStatus.textContent = wordAnalysis.length
-    ? "Click a word region, then move its boundaries if playback cuts badly."
+    ? "Click a word region, edit boundaries, and compare the pitch contour with phrase stress."
     : "Waveform is ready. Word boundaries will appear after analysis.";
   updateWaveformSelectionText();
 }
@@ -2176,6 +2210,7 @@ function renderAudioAnalysis(analysis) {
     item.textContent = tip;
     audioAnalysisTips.append(item);
   });
+  drawWaveform();
 }
 
 async function transcribeWithSpeechApi(blob, referenceText = getAnalysisReferenceText()) {
@@ -2777,8 +2812,26 @@ function activateScreen(screenId) {
   stopSpeech();
 }
 
+function activatePracticeTab(tabId) {
+  practiceSubtabs.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.practiceTab === tabId);
+  });
+
+  practicePanels.forEach((panel) => {
+    panel.classList.toggle("is-active", panel.dataset.practicePanel === tabId);
+  });
+
+  if (tabId === "waveform") {
+    window.requestAnimationFrame(drawWaveform);
+  }
+}
+
 tabButtons.forEach((button) => {
   button.addEventListener("click", () => activateScreen(button.dataset.screen));
+});
+
+practiceSubtabs.forEach((button) => {
+  button.addEventListener("click", () => activatePracticeTab(button.dataset.practiceTab));
 });
 
 sourceText.addEventListener("input", updateTextStats);

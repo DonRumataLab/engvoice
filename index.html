@@ -109,7 +109,15 @@
 
               <audio id="recordingPlayer" controls hidden></audio>
 
-              <section class="waveform-panel" aria-label="Recording waveform editor">
+              <nav class="practice-subtabs" aria-label="Pronunciation sections">
+                <button class="practice-subtab is-active" type="button" data-practice-tab="overview">Overview</button>
+                <button class="practice-subtab" type="button" data-practice-tab="words">Words</button>
+                <button class="practice-subtab" type="button" data-practice-tab="waveform">Waveform</button>
+                <button class="practice-subtab" type="button" data-practice-tab="drill">Drill</button>
+                <button class="practice-subtab" type="button" data-practice-tab="phonemes">Phonemes</button>
+              </nav>
+
+              <section class="waveform-panel" data-practice-panel="waveform" aria-label="Recording waveform editor">
                 <div class="panel-header-row">
                   <h2>Waveform editor</h2>
                   <span id="waveformStatus" class="muted">Record speech to edit word boundaries.</span>
@@ -127,7 +135,7 @@
                 </div>
               </section>
 
-              <div class="analysis-layout">
+              <div class="analysis-layout is-active" data-practice-panel="overview">
                 <article class="score-card">
                   <span class="score-label">Practice score</span>
                   <strong id="practiceScore">--</strong>
@@ -141,7 +149,7 @@
                 </article>
               </div>
 
-              <div class="speech-metrics-grid" aria-label="Speech quality metrics">
+              <div class="speech-metrics-grid is-active" data-practice-panel="overview" aria-label="Speech quality metrics">
                 <article>
                   <span id="paceMetric">--</span>
                   <small>pace</small>
@@ -160,14 +168,14 @@
                 </article>
               </div>
 
-              <section class="transcript-panel" aria-label="Speech transcript">
+              <section class="transcript-panel is-active" data-practice-panel="overview" aria-label="Speech transcript">
                 <div>
                   <h2>Recognized speech</h2>
                   <p id="transcriptText" class="transcript">No recording yet.</p>
                 </div>
               </section>
 
-              <section class="word-analysis-panel" aria-label="Word by word assessment">
+              <section class="word-analysis-panel" data-practice-panel="words" aria-label="Word by word assessment">
                 <div class="panel-header-row">
                   <h2>Word assessment</h2>
                   <span id="wordAnalysisSummary" class="muted">Record speech to see word scores.</span>
@@ -175,7 +183,7 @@
                 <div id="wordAnalysisList" class="word-analysis-list"></div>
               </section>
 
-              <section class="audio-analysis-panel" aria-label="Free audio analyzer">
+              <section class="audio-analysis-panel is-active" data-practice-panel="overview" aria-label="Free audio analyzer">
                 <div class="panel-header-row">
                   <h2>Free audio analyzer</h2>
                   <span id="audioAnalysisSummary" class="muted">Record speech to analyze the signal.</span>
@@ -223,7 +231,7 @@
                 </ul>
               </section>
 
-              <section class="phoneme-panel" aria-label="Phoneme forced alignment">
+              <section class="phoneme-panel" data-practice-panel="phonemes" aria-label="Phoneme forced alignment">
                 <div class="panel-header-row">
                   <h2>Phoneme analyzer</h2>
                   <span id="phonemeAnalysisSummary" class="muted">Self-hosted MFA mode is optional.</span>
@@ -231,7 +239,7 @@
                 <div id="phonemeAnalysisList" class="phoneme-analysis-list"></div>
               </section>
 
-              <section class="drill-panel" aria-label="Error correction mode">
+              <section class="drill-panel" data-practice-panel="drill" aria-label="Error correction mode">
                 <div class="panel-header-row">
                   <h2>Error drill</h2>
                   <button id="startDrillBtn" type="button" disabled>Start drill</button>
