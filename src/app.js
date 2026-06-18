@@ -17,6 +17,7 @@ const readerCurrentText = document.querySelector("#readerCurrentText");
 const sourceText = document.querySelector("#sourceText");
 const fileInput = document.querySelector("#fileInput");
 const fileName = document.querySelector("#fileName");
+const chunkToggle = document.querySelector("#chunkToggle");
 const chunkSummary = document.querySelector("#chunkSummary");
 const chunkList = document.querySelector("#chunkList");
 const wordCount = document.querySelector("#wordCount");
@@ -95,6 +96,7 @@ let wordAnalysis = [];
 let selectedWaveformWordId = null;
 let practiceChunks = [];
 let activeChunkIndex = 0;
+let chunkingEnabled = true;
 let speechQueue = [];
 let speechQueueIndex = 0;
 let speechStopped = false;
@@ -173,7 +175,8 @@ function getAnalysisReferenceText() {
 
 function renderPracticeChunks() {
   const previousText = practiceChunks[activeChunkIndex];
-  practiceChunks = splitPracticeText(sourceText.value);
+  const fullText = sourceText.value.replace(/\s+/g, " ").trim();
+  practiceChunks = chunkingEnabled ? splitPracticeText(sourceText.value) : fullText ? [fullText] : [];
   const preservedIndex = previousText ? practiceChunks.indexOf(previousText) : -1;
   activeChunkIndex =
     preservedIndex >= 0 ? preservedIndex : Math.min(activeChunkIndex, Math.max(0, practiceChunks.length - 1));
@@ -194,9 +197,13 @@ function renderPracticeChunks() {
     chunkList.append(button);
   });
 
-  chunkSummary.textContent = practiceChunks.length
-    ? `${activeChunkIndex + 1}/${practiceChunks.length} phrase selected`
-    : "No phrase selected";
+  if (!practiceChunks.length) {
+    chunkSummary.textContent = "No phrase selected";
+  } else if (chunkingEnabled) {
+    chunkSummary.textContent = `${activeChunkIndex + 1}/${practiceChunks.length} phrase selected`;
+  } else {
+    chunkSummary.textContent = "Full text selected";
+  }
 }
 
 async function extractTextFromPdf(file) {
@@ -2724,6 +2731,15 @@ tabButtons.forEach((button) => {
 });
 
 sourceText.addEventListener("input", updateTextStats);
+chunkToggle.addEventListener("change", () => {
+  chunkingEnabled = chunkToggle.checked;
+  activeChunkIndex = 0;
+  renderPracticeChunks();
+  resetPronunciationAnalysis();
+  transcriptText.textContent = chunkingEnabled
+    ? "Text splitting is on. Select a short phrase to practice."
+    : "Text splitting is off. The full text will be used for practice.";
+});
 readerText.addEventListener("input", updateReaderTextStats);
 
 readerFileInput.addEventListener("change", async () => {
