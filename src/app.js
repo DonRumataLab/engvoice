@@ -106,6 +106,7 @@ let speechDisplay = null;
 let speechFallbackTimer = null;
 let activePracticeTab = "overview";
 let waveformNeedsRedraw = false;
+const preferredVoiceName = "Google UK English Male";
 
 function normalizeText(value) {
   return value
@@ -268,6 +269,7 @@ function extractTextFromFile(name, rawText) {
 }
 
 function populateVoiceSelect(selectElement) {
+  const previousValue = selectElement.value;
   selectElement.innerHTML = "";
 
   if (!voices.length) {
@@ -280,6 +282,12 @@ function populateVoiceSelect(selectElement) {
     const option = new Option(`${voice.name} (${voice.lang})`, voice.name);
     selectElement.add(option);
   });
+
+  const hasPreviousVoice = voices.some((voice) => voice.name === previousValue);
+  const preferredVoice = voices.find(
+    (voice) => voice.name === preferredVoiceName && voice.lang === "en-GB",
+  );
+  selectElement.value = hasPreviousVoice ? previousValue : preferredVoice?.name || voices[0]?.name || "";
 }
 
 function loadVoices() {
